@@ -92,6 +92,13 @@ const Game = {
     document.getElementById('maxAmmo').textContent = this.maxAmmo;
     document.getElementById('timer').textContent = this.timeLeft;
     document.getElementById('healthFill').style.width = '100%';
+
+    // 모바일 브라우저 동작 제한 (스크롤 방지)
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.width = '100%';
+    document.body.style.height = '100%';
     
     this.startTimer();
     AudioManager.playMusic();
@@ -119,6 +126,13 @@ const Game = {
     if (document.pointerLockElement) {
       document.exitPointerLock();
     }
+
+    // 모바일 브라우저 동작 제한 해제
+    document.body.style.overflow = '';
+    document.documentElement.style.overflow = '';
+    document.body.style.position = '';
+    document.body.style.width = '';
+    document.body.style.height = '';
     
     document.getElementById('finalScore').textContent = this.score;
     document.getElementById('gameOverScreen').style.display = 'flex';

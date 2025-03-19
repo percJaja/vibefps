@@ -55,6 +55,19 @@ const InputManager = {
     const joystick = document.getElementById('joystick');
     const joystickKnob = document.getElementById('joystickKnob');
     const shootButton = document.getElementById('shootButton');
+
+    // 전체 문서에 터치 이벤트 기본 동작 방지
+    document.addEventListener('touchmove', function(e) {
+        if (Game.gameStarted) {
+            e.preventDefault();
+        }
+    }, { passive: false });
+
+    document.addEventListener('touchstart', function(e) {
+        if (Game.gameStarted) {
+            e.preventDefault();
+        }
+    }, { passive: false });
     
     // 조이스틱 터치 이벤트
     joystick.addEventListener('touchstart', (e) => {
@@ -101,7 +114,7 @@ const InputManager = {
           }
         }
       }
-    });
+    }, { passive: false });
     
     document.addEventListener('touchend', (e) => {
       // 모든 터치가 끝났는지 확인
