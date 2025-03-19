@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FPS 게임 - Vibe Jam 2025</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="startScreen" class="screen">
+      <h1>FPS 게임</h1>
+      <p>WASD로 이동, 마우스로 조준, 클릭으로 발사</p>
+      <button id="startButton" class="button">게임 시작</button>
+  </div>
+  
+  <div id="settingsScreen" class="screen">
+      <h2>설정</h2>
+      <div class="settings-grid">
+          <div>앞으로 이동:</div>
+          <div>
+              <select id="forwardKey" class="keyBinding">
+                  <option value="KeyW">W</option>
+                  <option value="KeyS">S</option>
+                  <option value="ArrowUp">↑</option>
+              </select>
+          </div>
+          
+          <div>뒤로 이동:</div>
+          <div>
+              <select id="backwardKey" class="keyBinding">
+                  <option value="KeyS">S</option>
+                  <option value="KeyW">W</option>
+                  <option value="ArrowDown">↓</option>
+              </select>
+          </div>
+          
+          <div>왼쪽 이동:</div>
+          <div>
+              <select id="leftKey" class="keyBinding">
+                  <option value="KeyA">A</option>
+                  <option value="KeyD">D</option>
+                  <option value="ArrowLeft">←</option>
+              </select>
+          </div>
+          
+          <div>오른쪽 이동:</div>
+          <div>
+              <select id="rightKey" class="keyBinding">
+                  <option value="KeyD">D</option>
+                  <option value="KeyA">A</option>
+                  <option value="ArrowRight">→</option>
+              </select>
+          </div>
+          
+          <div>음악 볼륨:</div>
+          <div>
+              <input type="range" id="musicVolume" min="0" max="1" step="0.1" value="0.5">
+          </div>
+          
+          <div>효과음 볼륨:</div>
+          <div>
+              <input type="range" id="sfxVolume" min="0" max="1" step="0.1" value="0.7">
+          </div>
+      </div>
+      <button id="saveSettings" class="button">저장</button>
+      <button id="cancelSettings" class="button">취소</button>
+  </div>
+  
+  <div id="gameOverScreen" class="screen" style="display: none;">
+      <h1>게임 종료</h1>
+      <p>최종 점수: <span id="finalScore">0</span></p>
+      <button id="restartButton" class="button">다시 시작</button>
+  </div>
+  
+  <div id="gameUI">
+      <div>점수: <span id="score">0</span></div>
+      <div>탄약: <span id="ammo">30</span> / <span id="maxAmmo">30</span></div>
+      <div>남은 시간: <span id="timer">60</span>초</div>
+      <button id="settingsButton" class="settings-btn">⚙️ 설정</button>
+  </div>
+  
+  <div class="health-bar">
+      <div class="health-fill" id="healthFill"></div>
+  </div>
+  
+  <img id="crosshair" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPGNpcmNsZSBjeD0iMTAiIGN5PSIxMCIgcj0iOCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBmaWxsPSJub25lIi8+CiAgPGNpcmNsZSBjeD0iMTAiIGN5PSIxMCIgcj0iMSIgZmlsbD0id2hpdGUiLz4KICA8bGluZSB4MT0iMTAiIHkxPSIzIiB4Mj0iMTAiIHkyPSI3IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiLz4KICA8bGluZSB4MT0iMTAiIHkxPSIxMyIgeDI9IjEwIiB5Mj0iMTciIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxsaW5lIHgxPSIzIiB5MT0iMTAiIHgyPSI3IiB5Mj0iMTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxsaW5lIHgxPSIxMyIgeTE9IjEwIiB4Mj0iMTciIHkyPSIxMCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIi8+Cjwvc3ZnPg==" alt="Crosshair">
+  
+  <div id="hitMarker">✕</div>
+  <div id="gunEffects"></div>
+  
+  <div id="mobileControls">
+      <div id="joystick">
+          <div id="joystickKnob"></div>
+      </div>
+      <div id="shootButton">발사</div>
+  </div>
+  
+  <a target="_blank" href="https://jam.pieter.com" style="font-family: 'system-ui', sans-serif; position: fixed; bottom: -1px; right: -1px; padding: 7px; font-size: 14px; font-weight: bold; background: #fff; color: #000; text-decoration: none; z-index: 10000; border: 1px solid #fff; border-top-left-radius: 12px;">🕹️ Vibe Jam 2025</a>
+  
+  <!-- 외부 라이브러리 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+  
+  <!-- 게임 모듈 -->
+  <script src="js/GameSettings.js"></script>
+  <script src="js/AudioManager.js"></script>
+  <script src="js/InputManager.js"></script>
+  <script src="js/Graphics.js"></script>
+  <script src="js/Physics.js"></script>
+  <script src="js/Environment.js"></script>
+  <script src="js/TargetManager.js"></script>
+  <script src="js/Game.js"></script>
+</body>
+</html>
