@@ -9,6 +9,16 @@ const Game = {
   playerDirection: new THREE.Vector3(),
   timerInterval: null,
   
+  // 부모 창과 통신하는 함수
+  sendGameState(state) {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        type: 'gameStateUpdate',
+        state: state // 'menu', 'playing', 'gameOver' 중 하나
+      }, '*');
+    }
+  },
+  
   init() {
     // 엔진 및 모듈 초기화
     Graphics.init();
@@ -24,6 +34,9 @@ const Game = {
     
     // 설정 로드
     GameSettings.loadSettings();
+    
+    // 부모 창에 메뉴 상태 알림
+    this.sendGameState('menu');
   },
   
   setupUIEvents() {
@@ -63,6 +76,8 @@ const Game = {
   
   startGame() {
     this.gameStarted = true;
+    this.sendGameState('playing'); // 게임 시작 상태 알림
+    
     this.score = 0;
     this.ammo = this.maxAmmo;
     this.timeLeft = 60;
@@ -104,6 +119,9 @@ const Game = {
     
     document.getElementById('finalScore').textContent = this.score;
     document.getElementById('gameOverScreen').style.display = 'flex';
+    
+    // 부모 창에 게임 오버 상태 알림
+    this.sendGameState('gameOver');
   },
   
   shoot() {
@@ -192,6 +210,23 @@ const Game = {
     Graphics.renderer.render(Graphics.scene, Graphics.camera);
   }
 };
+
+// 부모 창으로부터 오는 메시지 처리
+window.addEventListener('message', (event) => {
+  const message = event.data;
+  if (message && message.type === 'checkGameState') {
+    // 현재 게임 상태 확인 및 전송
+    if (Game.gameStarted) {
+      Game.sendGameState('playing');
+    } else {
+      if (document.getElementById('gameOverScreen').style.display === 'flex') {
+        Game.sendGameState('gameOver');
+      } else {
+        Game.sendGameState('menu');
+      }
+    }
+  }
+});
 
 window.addEventListener('load', () => {
   Game.init();

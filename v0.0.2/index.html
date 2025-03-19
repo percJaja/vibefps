@@ -863,6 +863,16 @@
             playerVelocity: new THREE.Vector3(),
             playerDirection: new THREE.Vector3(),
             timerInterval: null,
+  
+            // 부모 창과 통신하는 함수
+            sendGameState(state) {
+              if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                  type: 'gameStateUpdate',
+                  state: state // 'menu', 'playing', 'gameOver' 중 하나
+                }, '*');
+              }
+            },
             
             init() {
                 // 게임 엔진 초기화
@@ -879,6 +889,9 @@
                 
                 // 설정 로드
                 GameSettings.loadSettings();
+    
+                // 부모 창에 메뉴 상태 알림
+                this.sendGameState('menu');
             },
             
             setupUIEvents() {
@@ -920,6 +933,7 @@
             
             startGame() {
                 this.gameStarted = true;
+                this.sendGameState('playing'); // 게임 시작 상태 알림
                 
                 // 기본값 설정
                 this.score = 0;
@@ -972,6 +986,9 @@
                 // 게임 오버 화면 표시
                 document.getElementById('finalScore').textContent = this.score;
                 document.getElementById('gameOverScreen').style.display = 'flex';
+
+                // 부모 창에 게임 오버 상태 알림
+                this.sendGameState('gameOver');
             },
             
             shoot() {
@@ -1081,6 +1098,22 @@
                 Graphics.renderer.render(Graphics.scene, Graphics.camera);
             }
         };
+
+        window.addEventListener('message', (event) => {
+          const message = event.data;
+          if (message && message.type === 'checkGameState') {
+            // 현재 게임 상태 확인 및 전송
+            if (Game.gameStarted) {
+              Game.sendGameState('playing');
+            } else {
+              if (document.getElementById('gameOverScreen').style.display === 'flex') {
+                Game.sendGameState('gameOver');
+              } else {
+                Game.sendGameState('menu');
+              }
+            }
+          }
+        });
 
         // 페이지 로드 시 게임 초기화
         window.addEventListener('load', () => {

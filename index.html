@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FPS 게임 - Vibe Jam 2025</title>
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      margin: 0;
+      background-color: #121212;
+      color: white;
+      overflow: hidden;
+    }
+
+    #versionSelector {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background-color: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      transition: opacity 0.3s ease;
+      opacity: 1;
+    }
+    
+    #versionSelector.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    select {
+      padding: 5px;
+      margin-left: 10px;
+      background-color: #333;
+      color: white;
+      border: 1px solid #555;
+      border-radius: 3px;
+    }
+
+    #gameContainer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    #loadingScreen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #121212;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 999;
+    }
+
+    #loadingScreen h1 {
+      font-size: 2.5rem;
+      margin-bottom: 20px;
+    }
+
+    .spinner {
+      border: 5px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top: 5px solid #4CAF50;
+      width: 50px;
+      height: 50px;
+      animation: spin 1s linear infinite;
+      margin-bottom: 20px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="loadingScreen">
+    <h1>FPS 게임</h1>
+    <div class="spinner"></div>
+    <p>게임을 로드하는 중...</p>
+  </div>
+
+  <div id="versionSelector">
+    <label for="version">버전:</label>
+    <select id="version">
+      <option value="v0.0.3" selected>v0.0.3 (최신)</option>
+      <option value="v0.0.2">v0.0.2</option>
+      <option value="v0.0.1">v0.0.1</option>
+    </select>
+  </div>
+
+  <div id="gameContainer">
+    <iframe id="gameFrame" src="" allowfullscreen></iframe>
+  </div>
+
+  <a target="_blank" href="https://jam.pieter.com" style="font-family: 'system-ui', sans-serif; position: fixed; bottom: -1px; right: -1px; padding: 7px; font-size: 14px; font-weight: bold; background: #fff; color: #000; text-decoration: none; z-index: 10000; border: 1px solid #fff; border-top-left-radius: 12px;">🕹️ Vibe Jam 2025</a>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const versionSelect = document.getElementById('version');
+      const gameFrame = document.getElementById('gameFrame');
+      const loadingScreen = document.getElementById('loadingScreen');
+      const versionSelector = document.getElementById('versionSelector');
+      
+      // 초기 버전 확인 및 설정
+      let currentVersion = 'v0.0.3'; // 기본값은 최신 버전
+      
+      // URL에서 버전 파라미터 확인
+      const urlParams = new URLSearchParams(window.location.search);
+      const versionParam = urlParams.get('version');
+      
+      if (versionParam && ['v0.0.1', 'v0.0.2', 'v0.0.3'].includes(versionParam)) {
+        currentVersion = versionParam;
+        versionSelect.value = currentVersion;
+      }
+      
+      // 버전 변경 이벤트
+      versionSelect.addEventListener('change', () => {
+        currentVersion = versionSelect.value;
+        loadGame(currentVersion);
+        
+        // URL 업데이트 (페이지 새로고침 없이)
+        const newUrl = `${window.location.pathname}?version=${currentVersion}`;
+        window.history.pushState({ version: currentVersion }, '', newUrl);
+      });
+      
+      // 게임 로드 함수
+      function loadGame(version) {
+        loadingScreen.style.display = 'flex';
+        
+        // 게임 프레임 로드
+        gameFrame.onload = () => {
+          setTimeout(() => {
+            loadingScreen.style.display = 'none';
+            
+            // iframe과의 통신 설정
+            setupFrameCommunication();
+          }, 1000); // 조금 지연하여 로딩 화면 표시
+        };
+        
+        gameFrame.src = `${version}/index.html`;
+      }
+      
+      // iframe과의 메시지 통신 설정
+      function setupFrameCommunication() {
+        // 이전 이벤트 리스너 제거 (중복 방지)
+        window.removeEventListener('message', handleFrameMessage);
+        
+        // 새 이벤트 리스너 등록
+        window.addEventListener('message', handleFrameMessage);
+        
+        // 초기 상태 확인을 위해 iframe에 메시지 전송
+        setTimeout(() => {
+          gameFrame.contentWindow.postMessage({ type: 'checkGameState' }, '*');
+        }, 500);
+      }
+      
+      // iframe으로부터의 메시지 처리
+      function handleFrameMessage(event) {
+        const message = event.data;
+        
+        if (message && message.type === 'gameStateUpdate') {
+          // 게임 상태에 따라 버전 선택기 표시/숨김
+          if (message.state === 'playing') {
+            // 게임 플레이 중이면 선택기 숨김
+            versionSelector.classList.add('hidden');
+          } else if (message.state === 'menu' || message.state === 'gameOver') {
+            // 메뉴 화면이나 게임 오버 화면이면 선택기 표시
+            versionSelector.classList.remove('hidden');
+          }
+        }
+      }
+      
+      // 초기 게임 로드
+      loadGame(currentVersion);
+      
+      // 뒤로가기/앞으로가기 버튼 지원
+      window.onpopstate = (event) => {
+        if (event.state && event.state.version) {
+          currentVersion = event.state.version;
+          versionSelect.value = currentVersion;
+          loadGame(currentVersion);
+        }
+      };
+    });
+  </script>
+</body>
+</html>
