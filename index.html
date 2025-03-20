@@ -100,7 +100,9 @@
   <div id="versionSelector">
     <label for="version">버전:</label>
     <select id="version">
-      <option value="v0.0.4" selected>v0.0.4 (최신)</option>
+      <option value="v0.0.6" selected>v0.0.6 (최신)</option>
+      <option value="v0.0.5">v0.0.5</option>
+      <option value="v0.0.4">v0.0.4</option>
       <option value="v0.0.3">v0.0.3</option>
       <option value="v0.0.2">v0.0.2</option>
       <option value="v0.0.1">v0.0.1</option>
@@ -121,13 +123,13 @@
       const versionSelector = document.getElementById('versionSelector');
       
       // 초기 버전 확인 및 설정
-      let currentVersion = 'v0.0.4'; // 기본값은 최신 버전
+      let currentVersion = 'v0.0.6'; // 기본값은 최신 버전
       
       // URL에서 버전 파라미터 확인
       const urlParams = new URLSearchParams(window.location.search);
       const versionParam = urlParams.get('version');
       
-      if (versionParam && ['v0.0.1', 'v0.0.2', 'v0.0.3', 'v0.0.4'].includes(versionParam)) {
+      if (versionParam && ['v0.0.1', 'v0.0.2', 'v0.0.3', 'v0.0.4', 'v0.0.5', 'v0.0.6'].includes(versionParam)) {
         currentVersion = versionParam;
         versionSelect.value = currentVersion;
       }
