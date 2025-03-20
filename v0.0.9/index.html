@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>FPS 게임 - Vibe Jam 2025</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- 자바스크립트 미리 로드 -->
+  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" as="script">
+  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js" as="script">
+  <style>
+    /* 필수 인라인 스타일 - 즉시 화면에 표시할 요소에 대한 스타일 */
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'system-ui', sans-serif;
+      touch-action: none;
+      background-color: #000;
+    }
+    
+    #overlayTip {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font-size: 24px;
+      text-align: center;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+      z-index: 1000;
+      opacity: 0.8;
+      pointer-events: none; /* 클릭/터치를 통과시킴 */
+      transition: opacity 0.5s;
+      animation: fadeInOut 3s forwards;
+    }
+    
+    @keyframes fadeInOut {
+      0% { opacity: 0; }
+      20% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    
+    /* 시작 화면 숨김 */
+    #startScreen {
+      display: none;
+    }
+    
+    #gameUI {
+      opacity: 0;
+      transition: opacity 1s;
+    }
+    
+    #gameUI.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <!-- 필수 조작법 팁 (사라짐) -->
+  <div id="overlayTip">
+    <p>WASD로 이동, 마우스로 조준, 클릭으로 발사</p>
+    <p>빨간색: 일반 (10점) | 금색: 보너스 (25점) | 녹색: 페널티 (-15점)</p>
+  </div>
+
+  <!-- 게임 시작 화면 (숨김) -->
+  <div id="startScreen" class="screen">
+      <h1>FPS 게임</h1>
+      <p>WASD로 이동, 마우스로 조준, 클릭으로 발사</p>
+      <p>빨간색 타겟: 일반 (10점) | 금색 타겟: 보너스 (25점) | 녹색 타겟: 페널티 (-15점)</p>
+      <p>연속 타격으로 콤보 점수를 얻으세요!</p>
+      <button id="startButton" class="button">게임 시작</button>
+  </div>
+  
+  <div id="settingsScreen" class="screen">
+      <h2>설정</h2>
+      <div class="settings-grid">
+          <div>앞으로 이동:</div>
+          <div>
+              <select id="forwardKey" class="keyBinding">
+                  <option value="KeyW">W</option>
+                  <option value="KeyS">S</option>
+                  <option value="ArrowUp">↑</option>
+              </select>
+          </div>
+          
+          <div>뒤로 이동:</div>
+          <div>
+              <select id="backwardKey" class="keyBinding">
+                  <option value="KeyS">S</option>
+                  <option value="KeyW">W</option>
+                  <option value="ArrowDown">↓</option>
+              </select>
+          </div>
+          
+          <div>왼쪽 이동:</div>
+          <div>
+              <select id="leftKey" class="keyBinding">
+                  <option value="KeyA">A</option>
+                  <option value="KeyD">D</option>
+                  <option value="ArrowLeft">←</option>
+              </select>
+          </div>
+          
+          <div>오른쪽 이동:</div>
+          <div>
+              <select id="rightKey" class="keyBinding">
+                  <option value="KeyD">D</option>
+                  <option value="KeyA">A</option>
+                  <option value="ArrowRight">→</option>
+              </select>
+          </div>
+          
+          <div>음악 볼륨:</div>
+          <div>
+              <input type="range" id="musicVolume" min="0" max="1" step="0.1" value="0.5">
+          </div>
+          
+          <div>효과음 볼륨:</div>
+          <div>
+              <input type="range" id="sfxVolume" min="0" max="1" step="0.1" value="0.7">
+          </div>
+      </div>
+      <button id="saveSettings" class="button">저장</button>
+      <button id="cancelSettings" class="button">취소</button>
+  </div>
+  
+  <div id="gameOverScreen" class="screen" style="display: none;">
+      <h1>게임 종료</h1>
+      <p>최종 점수: <span id="finalScore">0</span></p>
+      <button id="restartButton" class="button">다시 시작</button>
+  </div>
+  
+  <div id="gameUI">
+      <div>점수: <span id="score">0</span></div>
+      <div>탄약: <span id="ammo">30</span> / <span id="maxAmmo">30</span></div>
+      <div>남은 시간: <span id="timer">60</span>초</div>
+      <button id="settingsButton" class="settings-btn">⚙️ 설정</button>
+  </div>
+  
+  <!-- 콤보 카운터 -->
+  <div id="combo" class="combo-counter">3x Combo (1.5x)</div>
+  
+  <div class="health-bar">
+      <div class="health-fill" id="healthFill"></div>
+  </div>
+  
+  <img id="crosshair" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPGNpcmNsZSBjeD0iMTAiIGN5PSIxMCIgcj0iOCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBmaWxsPSJub25lIi8+CiAgPGNpcmNsZSBjeD0iMTAiIGN5PSIxMCIgcj0iMSIgZmlsbD0id2hpdGUiLz4KICA8bGluZSB4MT0iMTAiIHkxPSIzIiB4Mj0iMTAiIHkyPSI3IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiLz4KICA8bGluZSB4MT0iMTAiIHkxPSIxMyIgeDI9IjEwIiB5Mj0iMTciIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxsaW5lIHgxPSIzIiB5MT0iMTAiIHgyPSI3IiB5Mj0iMTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxsaW5lIHgxPSIxMyIgeTE9IjEwIiB4Mj0iMTciIHkyPSIxMCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIi8+Cjwvc3ZnPg==" alt="Crosshair">
+  
+  <div id="hitMarker">✕</div>
+  <div id="gunEffects"></div>
+  
+  <div id="mobileControls">
+      <div id="joystick">
+          <div id="joystickKnob"></div>
+      </div>
+      <div id="shootButton">발사</div>
+  </div>
+  
+  <a target="_blank" href="https://jam.pieter.com" style="font-family: 'system-ui', sans-serif; position: fixed; bottom: -1px; right: -1px; padding: 7px; font-size: 14px; font-weight: bold; background: #fff; color: #000; text-decoration: none; z-index: 10000; border: 1px solid #fff; border-top-left-radius: 12px;">🕹️ Vibe Jam 2025</a>
+  
+  <!-- 외부 라이브러리 - async 속성 추가하여 병렬 로드 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+  
+  <!-- 즉시 게임 시작을 위한 인라인 스크립트 -->
+  <script>
+    // 조작법 팁 제어
+    setTimeout(() => {
+      const tip = document.getElementById('overlayTip');
+      if (tip) {
+        tip.style.opacity = '0';
+        setTimeout(() => {
+          tip.remove();
+        }, 500);
+      }
+    }, 3000);
+
+    // 게임 UI 서서히 나타나게
+    setTimeout(() => {
+      document.getElementById('gameUI').classList.add('visible');
+    }, 1000);
+    
+    // 모든 게임 모듈이 로드되면 자동으로 게임 시작
+    function initializeAndStartGame() {
+      // 게임 모듈 로드
+      const modules = [
+        'js/GameSettings.js',
+        'js/AudioManager.js',
+        'js/InputManager.js',
+        'js/Graphics.js',
+        'js/Physics.js',
+        'js/Environment.js',
+        'js/ParticleSystem.js', // 추가된 파티클 시스템 모듈
+        'js/TargetManager.js',
+        'js/GitHubTarget.js', // 추가된 GitHub 타겟 모듈
+        'js/Game.js'
+      ];
+      
+      let loadedCount = 0;
+      
+      // 각 모듈 로드
+      modules.forEach(src => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = false; // 게임 모듈은 순서대로 로드되어야 함
+        
+        script.onload = () => {
+          loadedCount++;
+          if (loadedCount === modules.length) {
+            console.log('모든 게임 모듈 로드 완료');
+            // 모든 모듈이 로드되고 1초 후 게임 자동 시작
+            setTimeout(() => {
+              if (typeof Game !== 'undefined' && Game.startGame) {
+                // startGame 함수를 직접 호출하여 게임 시작
+                document.getElementById('startScreen').style.display = 'none';
+                Game.startGame();
+              }
+            }, 1000);
+          }
+        };
+        
+        document.body.appendChild(script);
+      });
+    }
+    
+    // 페이지 로드 즉시 게임 초기화 및 시작
+    initializeAndStartGame();
+  </script>
+</body>
+</html>
