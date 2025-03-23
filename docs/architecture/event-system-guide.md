@@ -27,8 +27,9 @@ EventSystem.once('eventName', callback, context);
 |------------|------------|------------|---------|
 | `targetHit` | TargetManager | Game | Notify about target hits and scoring |
 | `gameStateChanged` | Game | InputManager, UI components | Broadcast game state transitions |
-| `playerMoved` | Game | Pending | Track player movement for other systems |
-| `effectRequest` | Pending | Graphics | Request visual effects |
+| `playerMoved` | Game | SpatialAudioSystem | Track player movement for audio system |
+| `audioEffectPlayed` | AudioManager | Various | Inform about audio events for synchronization |
+| `effectRequest` | Various | Graphics | Request visual effects |
 
 ## Integration Examples
 
@@ -147,6 +148,44 @@ handleGameStateChange(data) {
 }
 ```
 
+### Audio System Integration Example
+
+The audio system now uses events for coordinating spatial audio effects:
+
+```javascript
+// In Game.js
+shoot() {
+  // ... other shooting logic ...
+  
+  // Get player position
+  const playerPosition = Physics.playerBody.position.clone();
+  
+  // Emit event for audio effect
+  EventSystem.emit('shootEvent', {
+    position: playerPosition,
+    type: 'powerful'
+  });
+}
+
+// In AudioManager.js
+init() {
+  // ... other initialization ...
+  
+  // Subscribe to shoot events
+  EventSystem.on('shootEvent', (data) => {
+    this.play('shoot', { 
+      type: data.type,
+      volume: 1.0
+    });
+    
+    // If spatial audio system exists, use it
+    if (typeof SpatialAudioSystem !== 'undefined') {
+      SpatialAudioSystem.createGunSoundWithReverb('shoot', data.position);
+    }
+  });
+}
+```
+
 ### Current Implementation Status
 
 The following modules have been updated to use the event system:
@@ -154,6 +193,7 @@ The following modules have been updated to use the event system:
 - **Game.js**
   - Emits `gameStateChanged` events during game state transitions
   - Listens for `targetHit` events to update score
+  - Integrated with audio events for gunshots and effects
 
 - **InputManager.js**
   - Listens for `gameStateChanged` events to manage controls appropriately
@@ -163,18 +203,30 @@ The following modules have been updated to use the event system:
   - Emits `targetHit` events when targets are successfully hit
   - Provides detailed hit data through event payload
 
+- **AudioManager.js**
+  - Partially integrated with events for sound triggering
+  - Works with SpatialAudioSystem for enhanced audio experiences
+  - Listening for gameplay events to trigger appropriate sounds
+
+- **SpatialAudioSystem.js**
+  - Beginning integration with player movement events
+  - Coordinating with AudioManager for spatial effects
+
 - **UI Components**
   - React to various events to update display
   - Settings button visibility controlled by game state events
 
-### Next Modules to Update
+### Remaining Modules to Update
 
-Priority order for updating remaining modules:
+Priority order for completing event system integration:
 
-1. **Graphics.js** - For visual feedback events
-2. **AudioManager.js** - For sound effect events triggered by game events
-3. **Physics.js** - For collision events
-4. **SpatialAudioSystem.js** - For environment-aware audio responses
+1. **Graphics.js** - Fully implement `effectRequest` event handling
+   - Allow other modules to request visual effects through events
+   - Decouple visual feedback from game logic
+
+2. **Physics.js** - Implement collision event emitting
+   - Send collision events that other modules can react to
+   - Replace direct references with event communication
 
 ## Common Pitfalls
 
@@ -207,6 +259,7 @@ function monitorEvent(eventName) {
 // Usage
 monitorEvent('targetHit');
 monitorEvent('gameStateChanged');
+monitorEvent('shootEvent');
 ```
 
 ## Migration Roadmap
@@ -254,3 +307,23 @@ EventSystem.on('audio:', (data) => {
   console.log('Audio event occurred:', data);
 });
 ```
+
+## Next Steps for Full Integration
+
+As we approach the submission deadline, the following steps will complete our event system integration:
+
+1. **Complete Graphics module integration** (Day 1)
+   - Implement standardized effect request events
+   - Decouple visual feedback from game logic
+
+2. **Finalize Physics-Event integration** (Day 1-2)
+   - Add collision event emissions
+   - Replace remaining direct references
+
+3. **Test complete event flow** (Day 2)
+   - Verify all critical paths use event communication
+   - Check for any missed direct dependencies
+
+4. **Final performance optimization** (Day 2)
+   - Analyze event usage patterns
+   - Optimize frequent events to minimize overhead
