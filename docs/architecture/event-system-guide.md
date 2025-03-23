@@ -2,7 +2,7 @@
 
 ## Overview
 
-The EventSystem is a publisher-subscriber (pub/sub) pattern implementation that enables loose coupling between game modules. This allows components to communicate without direct dependencies.
+The EventSystem is a publisher-subscriber (pub/sub) pattern implementation that enables loose coupling between game modules. This allows components to communicate without direct dependencies, making the codebase more maintainable and extensible.
 
 ## Core Functionality
 
@@ -16,7 +16,19 @@ EventSystem.emit('eventName', data);
 
 // 3. Unsubscribe from events
 EventSystem.off('eventName', callback, context);
+
+// 4. One-time event subscription
+EventSystem.once('eventName', callback, context);
 ```
+
+## Key Events in the Game
+
+| Event Name | Emitted By | Handled By | Purpose |
+|------------|------------|------------|---------|
+| `targetHit` | TargetManager | Game | Notify about target hits and scoring |
+| `gameStateChanged` | Game | InputManager, UI components | Broadcast game state transitions |
+| `playerMoved` | Game | Pending | Track player movement for other systems |
+| `effectRequest` | Pending | Graphics | Request visual effects |
 
 ## Integration Examples
 
@@ -53,21 +65,116 @@ When upgrading a module to use the event system:
    };
    ```
 
+### Score Handling Example
+
+One of the core implementations now using the event system is the target hit scoring mechanism:
+
+```javascript
+// In TargetManager.js
+checkHit(raycaster) {
+  // ... target hit detection logic ...
+  
+  if (hitTargets.length > 0) {
+    // Instead of directly calling Game.addScore()
+    EventSystem.emit('targetHit', {
+      totalPoints: totalPoints,
+      hitTargets: hitTargets,
+      comboCount: this.comboCount,
+      comboMultiplier: this.comboMultiplier,
+      penetrationBonus: penetrationBonus
+    });
+    
+    return true;
+  }
+  
+  return false;
+}
+
+// In Game.js
+init() {
+  // ... other initialization code ...
+  
+  // Subscribe to target hit events
+  EventSystem.on('targetHit', (data) => {
+    this.addScore(data.totalPoints);
+    // Could also handle other aspects like achievements, special effects, etc.
+  });
+}
+```
+
+### Game State Management Example
+
+Game state changes are now broadcast through events:
+
+```javascript
+// In Game.js when changing state
+startGame() {
+  this.gameStarted = true;
+  
+  // Notify all interested modules about the state change
+  EventSystem.emit('gameStateChanged', { state: 'playing' });
+  
+  // ... other start game logic ...
+}
+
+gameOver() {
+  this.gameStarted = false;
+  
+  // Notify all interested modules about the state change
+  EventSystem.emit('gameStateChanged', { state: 'gameOver' });
+  
+  // ... other game over logic ...
+}
+
+// In InputManager.js or other modules that need to react to game state
+init() {
+  // ... other initialization code ...
+  
+  // Register for game state events
+  EventSystem.on('gameStateChanged', this.handleGameStateChange.bind(this));
+}
+
+handleGameStateChange(data) {
+  // React to game state changes
+  switch (data.state) {
+    case 'playing':
+      // Enable controls, etc.
+      break;
+    case 'gameOver':
+      // Disable controls, etc.
+      break;
+  }
+}
+```
+
 ### Current Implementation Status
 
-Currently, these modules have been updated to use the event system:
+The following modules have been updated to use the event system:
 
-- Game.js - Listens for 'targetHit' events
-- InputManager.js - Listens for 'gameStateChanged' events
-- TargetManager.js - Emits 'targetHit' events
+- **Game.js**
+  - Emits `gameStateChanged` events during game state transitions
+  - Listens for `targetHit` events to update score
+
+- **InputManager.js**
+  - Listens for `gameStateChanged` events to manage controls appropriately
+  - Updates button states based on game state events
+
+- **TargetManager.js**
+  - Emits `targetHit` events when targets are successfully hit
+  - Provides detailed hit data through event payload
+
+- **UI Components**
+  - React to various events to update display
+  - Settings button visibility controlled by game state events
 
 ### Next Modules to Update
 
 Priority order for updating remaining modules:
 
-1. Graphics.js - For visual feedback events
-2. AudioManager.js - For sound effect events
-3. Physics.js - For collision events
+1. **Graphics.js** - For visual feedback events
+2. **AudioManager.js** - For sound effect events triggered by game events
+3. **Physics.js** - For collision events
+4. **SpatialAudioSystem.js** - For environment-aware audio responses
 
 ## Common Pitfalls
 
@@ -83,6 +190,10 @@ Priority order for updating remaining modules:
    - Problem: Using events for every interaction creates unnecessary complexity
    - Solution: Only use events for cross-module communication, not for internal module logic
 
+4. **Large Event Payloads**
+   - Problem: Passing too much data in events can lead to performance issues
+   - Solution: Keep event payloads focused and minimal, only including necessary data
+
 ## Testing Events
 
 ```javascript
@@ -96,4 +207,50 @@ function monitorEvent(eventName) {
 // Usage
 monitorEvent('targetHit');
 monitorEvent('gameStateChanged');
+```
+
+## Migration Roadmap
+
+When migrating a module to use the event system:
+
+1. **Identify direct dependencies** - Look for places where the module directly calls methods on other modules
+2. **Replace with events** - Substitute direct calls with event emissions
+3. **Update dependent modules** - Ensure they listen for the new events
+4. **Test thoroughly** - Events introduce asynchronous behavior that can be harder to debug
+
+## Best Practices
+
+1. **Standard Event Names** - Follow naming conventions (e.g., past tense for completed actions)
+2. **Document Events** - Maintain a registry of all events with their purpose and data format
+3. **Context Binding** - Always use `.bind(this)` when needed to preserve context in event handlers
+4. **Error Handling** - Wrap event handlers in try/catch to prevent one broken handler from affecting others
+
+## Advanced Usage
+
+### Conditional Events
+
+For performance optimization, you can use conditional event emission:
+
+```javascript
+// Only emit if there are listeners
+if (EventSystem.listenerCount('specialEvent') > 0) {
+  // Prepare potentially expensive data
+  const complexData = prepareComplexData();
+  EventSystem.emit('specialEvent', complexData);
+}
+```
+
+### Event Grouping
+
+For related events, consider using namespaces:
+
+```javascript
+// Emitting grouped events
+EventSystem.emit('audio:play', { sound: 'explosion' });
+EventSystem.emit('audio:stop', { channel: 'music' });
+
+// Listening for all audio events
+EventSystem.on('audio:', (data) => {
+  console.log('Audio event occurred:', data);
+});
 ```
