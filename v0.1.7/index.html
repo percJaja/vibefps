@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>FPS Game - Vibe Jam 2025</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- 자바스크립트 미리 로드 -->
+  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" as="script">
+  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js" as="script">
+  <style>
+    /* 필수 인라인 스타일 - 즉시 화면에 표시할 요소에 대한 스타일 */
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'system-ui', sans-serif;
+      touch-action: none;
+      background-color: #000;
+    }
+    
+    #overlayTip {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font-size: 24px;
+      text-align: center;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+      z-index: 1000;
+      opacity: 0.8;
+      pointer-events: none; /* 클릭/터치를 통과시킴 */
+      transition: opacity 0.5s;
+      animation: fadeInOut 3s forwards;
+    }
+    
+    @keyframes fadeInOut {
+      0% { opacity: 0; }
+      20% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    
+    /* 시작 화면 숨김 */
+    #startScreen {
+      display: none;
+    }
+    
+    #gameUI {
+      opacity: 0;
+      transition: opacity 1s;
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-size: 18px;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+    }
+    
+    #gameUI.visible {
+      opacity: 1;
+    }
+    
+    /* 설정 버튼 위치 조정 - 우측 상단으로 이동 */
+    .settings-btn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background-color: rgba(0, 0, 0, 0.5);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      padding: 8px 12px;
+      cursor: pointer;
+      z-index: 1000; /* 높은 z-index 값으로 상호작용 보장 */
+      font-weight: bold;
+      box-shadow: 0 0 5px rgba(0,0,0,0.5);
+      transition: all 0.3s;
+      /* 모바일에서 터치 영역 확대 */
+      min-width: 44px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      /* 터치 동작 명시적 허용 */
+      touch-action: manipulation;
+    }
+
+    /* 비활성화 상태의 설정 버튼 (v0.1.4 추가) */
+    .settings-btn.disabled {
+      opacity: 0.7;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    
+    /* 설정 버튼 숨김 상태 */
+    .settings-btn.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    
+    .settings-btn:hover {
+      background-color: rgba(50, 50, 50, 0.7);
+    }
+    
+    /* 향상된 설정 메뉴 스타일 */
+    .settings-grid {
+      display: grid;
+      grid-template-columns: 150px 150px;
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    
+    .settings-section {
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    .settings-header {
+      font-size: 18px;
+      margin-bottom: 15px;
+      color: #4CAF50;
+    }
+    
+    select, input {
+      background-color: rgba(40, 40, 40, 0.8);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      padding: 6px 8px;
+      border-radius: 4px;
+      width: 100%;
+    }
+    
+    /* 설정 화면 스타일 개선 */
+    .screen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: white;
+      z-index: 100;
+    }
+    
+    #settingsScreen {
+      padding: 0;
+      justify-content: flex-start;
+      overflow: hidden;
+      z-index: 101;
+    }
+    
+    /* 설정 화면 제목 영역 */
+    .settings-title {
+      width: 100%;
+      text-align: center;
+      padding: 15px 0;
+      position: relative;
+      background-color: rgba(0, 0, 0, 0.5);
+      z-index: 2;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    /* 설정 화면 내용 영역 - 스크롤 가능 */
+    .settings-content {
+      width: 100%;
+      flex: 1;
+      overflow-y: scroll;
+      -webkit-overflow-scrolling: touch; /* iOS 스크롤 개선 */
+      padding: 0 20px;
+      box-sizing: border-box;
+      overscroll-behavior: contain; /* 바운스 효과 제한 */
+      position: relative;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    
+    /* 스크롤바 스타일 */
+    .settings-content::-webkit-scrollbar {
+      width: 8px;
+    }
+    
+    .settings-content::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+    }
+    
+    .settings-content::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 4px;
+    }
+    
+    /* 게임으로 돌아가기 버튼 - 모든 화면 크기에서 항상 보이도록 */
+    .return-button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      padding: 15px 25px;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      touch-action: manipulation;
+      width: 80%;
+      max-width: 300px;
+      margin: 15px auto;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1001;
+    }
+    
+    .return-button:hover {
+      background-color: #3e8e41;
+    }
+    
+    /* 모바일에서 표시될 요소와 숨겨질 요소 */
+    body.is-mobile .pc-only {
+      display: none !important;
+    }
+    
+    body.is-mobile .mobile-only {
+      display: block !important;
+    }
+    
+    /* 가로 모드에서 설정 화면 최적화 */
+    @media (orientation: landscape) {
+      .settings-content {
+        padding-bottom: 80px; /* 하단 버튼 공간 확보 */
+      }
+      
+      /* 가로 모드에서 그리드 레이아웃 최적화 */
+      .settings-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+      
+      /* 가로 모드에서 메인 UI 크기 축소 */
+      #gameUI {
+        font-size: 14px;
+      }
+    }
+    
+    /* 모바일에서의 설정 그리드 조정 */
+    @media (max-width: 768px) {
+      .settings-grid {
+        grid-template-columns: 120px 150px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- 필수 조작법 팁 (사라짐) -->
+  <div id="overlayTip">
+    <p data-i18n="tipControls">WASD로 이동, 마우스로 조준, 클릭으로 발사</p>
+    <p data-i18n="tipTargets">빨간색: 일반 (10점) | 금색: 보너스 (25점) | 녹색: 페널티 (-15점)</p>
+  </div>
+
+  <!-- 게임 시작 화면 (숨김) -->
+  <div id="startScreen" class="screen">
+      <h1 data-i18n="gameTitle">FPS 게임</h1>
+      <p data-i18n="tipControls">WASD로 이동, 마우스로 조준, 클릭으로 발사</p>
+      <p data-i18n="tipTargets">빨간색 타겟: 일반 (10점) | 금색 타겟: 보너스 (25점) | 녹색 타겟: 페널티 (-15점)</p>
+      <p data-i18n="comboBenefit">연속 타격으로 콤보 점수를 얻으세요!</p>
+      <button id="startButton" class="button" data-i18n="startButton">게임 시작</button>
+  </div>
+  
+  <!-- 개선된 통합 설정 화면 -->
+  <div id="settingsScreen" class="screen">
+      <!-- 설정 타이틀 (고정) -->
+      <div class="settings-title">
+          <h2 data-i18n="settingsTitle">설정</h2>
+      </div>
+      
+      <!-- 스크롤 가능한 설정 내용 -->
+      <div class="settings-content">
+          <!-- 언어 설정 섹션 -->
+          <div class="settings-section">
+              <div class="settings-header" data-i18n="languageSettings">언어 설정</div>
+              <div class="settings-grid">
+                  <div data-i18n="language">언어:</div>
+                  <div>
+                      <select id="languageSelect">
+                          <option value="ko">한국어</option>
+                          <option value="en">English</option>
+                      </select>
+                  </div>
+              </div>
+          </div>
+          
+          <!-- 키 설정 섹션 (PC 전용) -->
+          <div class="settings-section pc-only" id="keyboardSettings">
+              <div class="settings-header" data-i18n="controlSettings">조작 설정</div>
+              <div class="settings-grid">
+                  <div data-i18n="forwardMove">앞으로 이동:</div>
+                  <div>
+                      <select id="forwardKey" class="keyBinding">
+                          <option value="KeyW">W</option>
+                          <option value="KeyS">S</option>
+                          <option value="ArrowUp">↑</option>
+                      </select>
+                  </div>
+                  
+                  <div data-i18n="backwardMove">뒤로 이동:</div>
+                  <div>
+                      <select id="backwardKey" class="keyBinding">
+                          <option value="KeyS">S</option>
+                          <option value="KeyW">W</option>
+                          <option value="ArrowDown">↓</option>
+                      </select>
+                  </div>
+                  
+                  <div data-i18n="leftMove">왼쪽 이동:</div>
+                  <div>
+                      <select id="leftKey" class="keyBinding">
+                          <option value="KeyA">A</option>
+                          <option value="KeyD">D</option>
+                          <option value="ArrowLeft">←</option>
+                      </select>
+                  </div>
+                  
+                  <div data-i18n="rightMove">오른쪽 이동:</div>
+                  <div>
+                      <select id="rightKey" class="keyBinding">
+                          <option value="KeyD">D</option>
+                          <option value="KeyA">A</option>
+                          <option value="ArrowRight">→</option>
+                      </select>
+                  </div>
+              </div>
+          </div>
+          
+          <!-- 모바일 설정 섹션 (모바일 전용) -->
+          <div class="settings-section mobile-only" id="mobileSettings" style="display: none;">
+              <div class="settings-header" data-i18n="mobileSettings">모바일 설정</div>
+              <div class="settings-grid">
+                  <div data-i18n="touchSensitivity">터치 감도:</div>
+                  <div>
+                      <input type="range" id="touchSensitivity" min="0.5" max="2" step="0.1" value="1">
+                  </div>
+              </div>
+          </div>
+          
+          <!-- 소리 설정 섹션 -->
+          <div class="settings-section">
+              <div class="settings-header" data-i18n="audioSettings">소리 설정</div>
+              <div class="settings-grid">
+                  <div data-i18n="musicVolume">음악 볼륨:</div>
+                  <div>
+                      <input type="range" id="musicVolume" min="0" max="1" step="0.1" value="0.5">
+                  </div>
+                  
+                  <div data-i18n="sfxVolume">효과음 볼륨:</div>
+                  <div>
+                      <input type="range" id="sfxVolume" min="0" max="1" step="0.1" value="0.7">
+                  </div>
+              </div>
+          </div>
+          
+          <!-- 고급 오디오 설정 섹션 (새로 추가) -->
+          <div class="settings-section">
+              <div class="settings-header" data-i18n="advancedAudioSettings">고급 오디오 설정</div>
+              <div class="settings-grid">
+                  <div data-i18n="spatialReverb">공간 반향:</div>
+                  <div>
+                      <input type="checkbox" id="spatialReverb" checked>
+                      <label for="spatialReverb" data-i18n="spatialReverbHint">벽에서 반사되는 소리 효과</label>
+                  </div>
+                  
+                  <div data-i18n="reverbQuality">반향 품질:</div>
+                  <div>
+                      <select id="reverbQuality">
+                          <option value="low" data-i18n="qualityLow">낮음</option>
+                          <option value="medium" selected data-i18n="qualityMedium">중간</option>
+                          <option value="high" data-i18n="qualityHigh">높음</option>
+                      </select>
+                  </div>
+              </div>
+          </div>
+          
+          <!-- 설정 변경 즉시 적용 설명 -->
+          <div class="settings-notice">
+            <p data-i18n="settingsAutoSave">모든 설정은 즉시 적용됩니다.</p>
+          </div>
+          
+          <!-- 하단 패딩 (버튼 공간 확보) -->
+          <div style="height: 100px;"></div>
+      </div>
+      
+      <!-- 게임으로 돌아가기 버튼 (하나만 표시) -->
+      <button id="returnToGameButton" class="return-button" data-i18n="returnToGame">게임으로 돌아가기</button>
+  </div>
+  
+  <div id="gameOverScreen" class="screen" style="display: none;">
+      <h1 data-i18n="gameOver">게임 종료</h1>
+      <p><span data-i18n="finalScore">최종 점수</span>: <span id="finalScore">0</span></p>
+      <button id="restartButton" class="button" data-i18n="restartButton">다시 시작</button>
+  </div>
+  
+  <div id="gameUI">
+      <div><span data-i18n="score">점수</span>: <span id="score">0</span></div>
+      <div><span data-i18n="ammo">탄약</span>: <span id="ammo">30</span> / <span id="maxAmmo">30</span></div>
+      <div><span data-i18n="timeLeft">남은 시간</span>: <span id="timer">60</span><span data-i18n="seconds">초</span></div>
+  </div>
+  
+  <!-- 설정 버튼 (게임 UI 밖으로 이동) -->
+  <button id="settingsButton" class="settings-btn">⚙️ <span data-i18n="settings">설정</span></button>
+  
+  <!-- 콤보 카운터 -->
+  <div id="combo" class="combo-counter">3x Combo (1.5x)</div>
+  
+  <div class="health-bar">
+      <div class="health-fill" id="healthFill"></div>
+  </div>
+  
+  <img id="crosshair" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPGNpcmNsZSBjeD0iMTAiIGN5PSIxMCIgcj0iOCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBmaWxsPSJub25lIi8+CiAgPGNpcmNsZSBjeD0iMTAiIGN5PSIxMCIgcj0iMSIgZmlsbD0id2hpdGUiLz4KICA8bGluZSB4MT0iMTAiIHkxPSIzIiB4Mj0iMTAiIHkyPSI3IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiLz4KICA8bGluZSB4MT0iMTAiIHkxPSIxMyIgeDI9IjEwIiB5Mj0iMTciIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxsaW5lIHgxPSIzIiB5MT0iMTAiIHgyPSI3IiB5Mj0iMTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxsaW5lIHgxPSIxMyIgeTE9IjEwIiB4Mj0iMTciIHkyPSIxMCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIi8+Cjwvc3ZnPg==" alt="Crosshair">
+  
+  <div id="hitMarker">✕</div>
+  <div id="gunEffects"></div>
+  
+  <div id="mobileControls">
+      <div id="joystick">
+          <div id="joystickKnob"></div>
+      </div>
+      <div id="shootButton" data-i18n="shoot">발사</div>
+  </div>
+  
+  <a target="_blank" href="https://jam.pieter.com" style="font-family: 'system-ui', sans-serif; position: fixed; bottom: -1px; right: -1px; padding: 7px; font-size: 14px; font-weight: bold; background: #fff; color: #000; text-decoration: none; z-index: 10000; border: 1px solid #fff; border-top-left-radius: 12px;">🕹️ Vibe Jam 2025</a>
+  
+  <!-- 외부 라이브러리 - async 속성 추가하여 병렬 로드 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+  
+  <!-- 먼저 로컬라이제이션 모듈 로드 -->
+  <script src="js/Localization.js"></script>
+  
+  <!-- 즉시 게임 시작을 위한 인라인 스크립트 -->
+  <script>
+    // 모바일 환경 감지 및 처리
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile) {
+      document.body.classList.add('is-mobile');
+      document.getElementById('mobileSettings').style.display = 'block';
+    }
+    
+    // 가로/세로 모드 감지 및 처리
+    function checkOrientation() {
+      if (window.innerWidth > window.innerHeight) {
+        document.body.classList.add('landscape');
+        document.body.classList.remove('portrait');
+      } else {
+        document.body.classList.add('portrait');
+        document.body.classList.remove('landscape');
+      }
+    }
+    
+    // 초기 방향 설정
+    checkOrientation();
+    
+    // 방향 변경 시 이벤트 처리
+    window.addEventListener('resize', checkOrientation);
+    window.addEventListener('orientationchange', checkOrientation);
+  
+    // 로컬라이제이션 초기화
+    if (typeof Localization !== 'undefined') {
+      Localization.init();
+    }
+    
+    // DOM 로드 완료 시 초기화
+    document.addEventListener('DOMContentLoaded', function() {
+      // 텍스트 업데이트
+      if (typeof Localization !== 'undefined') {
+        Localization.updateAllTexts();
+        
+        // 언어 선택기 초기화
+        const languageSelect = document.getElementById('languageSelect');
+        if (languageSelect) {
+          languageSelect.value = Localization.currentLanguage;
+          
+          // 언어 변경 이벤트 등록 (즉시 적용)
+          languageSelect.addEventListener('change', function() {
+            Localization.setLanguage(this.value);
+          });
+        }
+      }
+      
+      // 설정 버튼 요소 참조
+      const settingsBtn = document.getElementById('settingsButton');
+      const settingsScreen = document.getElementById('settingsScreen');
+      
+      // ESC 키로 설정 창 닫기 기능 추가
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+          if (settingsScreen.style.display === 'flex') {
+            closeSettings();
+          }
+        }
+      });
+      
+      // 설정 창 닫기 함수
+      function closeSettings() {
+        settingsScreen.style.display = 'none';
+        
+        // 설정 버튼 다시 표시
+        if (settingsBtn) {
+          settingsBtn.classList.remove('hidden');
+        }
+        
+        // 설정 저장 함수 호출
+        if (typeof GameSettings !== 'undefined') {
+          GameSettings.saveSettings();
+        }
+        
+        // 게임에 설정 창 닫힘 알림
+        if (typeof Game !== 'undefined' && Game.gameStarted) {
+          Game.isSettingsOpen = false;
+          
+          // 모바일이 아닐 경우에만 포인터 락 요청
+          if (!isMobile) {
+            try {
+              Graphics.renderer.domElement.requestPointerLock();
+            } catch (e) {
+              console.warn('Pointer lock request failed:', e);
+            }
+          }
+        }
+      }
+      
+      // 설정 창 열기 함수
+      function openSettings() {
+        // 설정 버튼 숨기기
+        if (settingsBtn) {
+          settingsBtn.classList.add('hidden');
+        }
+        
+        // 설정 화면 표시
+        settingsScreen.style.display = 'flex';
+        
+        // 설정 저장 함수 호출
+        if (typeof Game !== 'undefined') {
+          Game.showSettings();
+        }
+      }
+      
+      // 게임으로 돌아가기 버튼
+      const returnButton = document.getElementById('returnToGameButton');
+      if (returnButton) {
+        returnButton.addEventListener('touchstart', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeSettings();
+        });
+        
+        returnButton.addEventListener('click', function() {
+          closeSettings();
+        });
+      }
+      
+      // 설정 버튼에 이벤트 리스너 추가
+      if (settingsBtn) {
+        // 모바일에서 터치 이벤트 처리
+        settingsBtn.addEventListener('touchstart', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openSettings();
+        });
+        
+        // 일반 클릭 이벤트도 유지
+        settingsBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          openSettings();
+        });
+      }
+      
+      // 설정 변경 즉시 적용
+      document.querySelectorAll('#settingsScreen select, #settingsScreen input').forEach(element => {
+        element.addEventListener('change', function() {
+          if (typeof GameSettings !== 'undefined') {
+            GameSettings.saveSettings();
+          }
+        });
+      });
+    });
+    
+    // 조작법 팁 제어
+    setTimeout(() => {
+      const tip = document.getElementById('overlayTip');
+      if (tip) {
+        tip.style.opacity = '0';
+        setTimeout(() => {
+          tip.remove();
+        }, 500);
+      }
+    }, 3000);
+
+    // 게임 UI 서서히 나타나게
+    setTimeout(() => {
+      document.getElementById('gameUI').classList.add('visible');
+    }, 1000);
+    
+    // 모든 게임 모듈이 로드되면 자동으로 게임 시작
+    function initializeAndStartGame() {
+      // 게임 모듈 로드
+      const modules = [
+        'js/EventSystem.js',       // [v0.1.2] 이벤트 시스템 추가
+        'js/GameSettings.js',
+        'js/AudioManager.js',
+        'js/SpatialAudioSystem.js', // 새로 추가: 공간 오디오 시스템
+        'js/InputManager.js',
+        'js/Graphics.js',
+        'js/Physics.js',
+        'js/Environment.js',
+        'js/ParticleSystem.js',
+        'js/TargetManager.js',
+        'js/GitHubTarget.js',
+        'js/Game.js'
+      ];
+      
+      let loadedCount = 0;
+      
+      // 각 모듈 로드
+      modules.forEach(src => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = false; // 게임 모듈은 순서대로 로드되어야 함
+        
+        script.onload = () => {
+          loadedCount++;
+          if (loadedCount === modules.length) {
+            console.log('모든 게임 모듈 로드 완료');
+            // 모든 모듈이 로드되고 1초 후 게임 자동 시작
+            setTimeout(() => {
+              if (typeof Game !== 'undefined' && Game.startGame) {
+                // startGame 함수를 직접 호출하여 게임 시작
+                document.getElementById('startScreen').style.display = 'none';
+                Game.startGame();
+              }
+            }, 1000);
+          }
+        };
+        
+        document.body.appendChild(script);
+      });
+    }
+    
+    // 페이지 로드 즉시 게임 초기화 및 시작
+    initializeAndStartGame();
+  </script>
+</body>
+</html>
