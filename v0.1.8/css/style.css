@@ -1,0 +1,186 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    font-family: 'system-ui', sans-serif;
+    touch-action: none; /* 브라우저 기본 터치 동작 방지 */
+}
+canvas {
+    display: block;
+    touch-action: none; /* 캔버스에서도 기본 터치 동작 방지 */
+}
+#gameUI {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: white;
+    font-size: 18px;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+#crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+.screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: white;
+    z-index: 100;
+}
+/* 처음부터 설정 화면을 숨기기 위해 추가된 부분 */
+#settingsScreen {
+    display: none;
+}
+.screen h1 {
+    font-size: 48px;
+    margin-bottom: 20px;
+}
+.screen p {
+    font-size: 18px;
+    margin-bottom: 30px;
+}
+.button {
+    background-color: #4CAF50;
+    border: none;
+    color: white;
+    padding: 15px 32px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 16px;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+#mobileControls {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    right: 20px;
+    display: none;
+    justify-content: space-between;
+}
+#joystick {
+    width: 100px;
+    height: 100px;
+    background-color: rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    position: relative;
+}
+#joystickKnob {
+    width: 40px;
+    height: 40px;
+    background-color: rgba(255, 255, 255, 0.7);
+    border-radius: 50%;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+#shootButton {
+    width: 70px;
+    height: 70px;
+    background-color: rgba(255, 0, 0, 0.5);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
+}
+.health-bar {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 200px;
+    height: 20px;
+    background-color: rgba(0, 0, 0, 0.5);
+    border-radius: 10px;
+    overflow: hidden;
+}
+.health-fill {
+    height: 100%;
+    background-color: #ff3333;
+    width: 100%;
+    transition: width 0.3s;
+}
+#gunEffects {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+#hitMarker {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: red;
+    font-size: 24px;
+    opacity: 0;
+    transition: opacity 0.1s;
+}
+.settings-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background-color: rgba(255, 255, 255, 0.3);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 5px 10px;
+    cursor: pointer;
+}
+.combo-counter {
+    position: absolute;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #ff9900;
+    font-size: 24px;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+    font-weight: bold;
+    opacity: 0;
+    display: none;
+    transition: opacity 0.3s, transform 0.2s;
+}
+
+/* v0.0.7에 추가된 스타일 */
+.settings-grid {
+    display: grid;
+    grid-template-columns: 150px 150px;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+/* 모바일 최적화 */
+@media (max-width: 768px) {
+    .screen h1 {
+        font-size: 32px;
+    }
+    .screen p {
+        font-size: 14px;
+        margin-bottom: 15px;
+    }
+    .button {
+        padding: 12px 24px;
+    }
+    .settings-grid {
+        grid-template-columns: 120px 120px;
+    }
+}
