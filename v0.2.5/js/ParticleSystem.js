@@ -1,278 +1,382 @@
+/**
+ * @file ParticleSystem.js
+ * @description Manages particle effects for impacts and explosions.
+ *
+ * !! WARNING !!
+ * This implementation uses individual THREE.Mesh objects per particle.
+ * This is **EXTREMELY INEFFICIENT** for large numbers of particles and WILL cause
+ * performance issues in a real game.
+ * It serves as a functional placeholder to meet the interface requirements of
+ * BulletPhysicsSystem.
+ *
+ * TODO: Replace this entire implementation with a performant solution using:
+ *   - THREE.InstancedMesh for debris/mesh-based particles.
+ *   - THREE.Points with custom shaders for sprite-like particles.
+ *   - Object pooling for particle instances/systems.
+ * !! WARNING !!
+ */
 const ParticleSystem = {
-  particles: [],
-  particleSystems: [],
-  
-  init() {
-    // 파티클 시스템 초기화
-    this.particles = [];
-    this.particleSystems = [];
-  },
-  
-  // 타겟 파괴 파티클 생성
-  createExplosion(position, color, count = 20, size = 0.1, speed = 3) {
-    // 파티클 재질 생성
-    const particleMaterial = new THREE.MeshBasicMaterial({
-      color: color,
-      transparent: true,
-      opacity: 0.9
-    });
-    
-    // 파티클 그룹
-    const particleGroup = new THREE.Group();
-    Graphics.scene.add(particleGroup);
-    
-    // 실제 시작 시간 저장 (wall clock time 기준으로 확실히 제거하기 위함)
-    const startTime = Date.now();
-    const maxLifeTime = 1200; // 최대 1.2초 후 강제 제거 (더 짧게 조정)
-    
-    // 파티클 생성
-    for (let i = 0; i < count; i++) {
-      // 파티클 형태 - 풍선 조각처럼 불규칙한 모양
-      let particleGeometry;
-      
-      // 랜덤하게 다양한 모양 생성
-      const shapeType = Math.floor(Math.random() * 4);
-      if (shapeType === 0) {
-        // 삼각형 조각
-        particleGeometry = new THREE.TetrahedronGeometry(size * (0.5 + Math.random() * 0.5));
-      } else if (shapeType === 1) {
-        // 구 조각
-        particleGeometry = new THREE.SphereGeometry(size * (0.3 + Math.random() * 0.7), 4, 4);
-      } else if (shapeType === 2) {
-        // 상자 조각
-        particleGeometry = new THREE.BoxGeometry(
-          size * (0.4 + Math.random() * 0.6),
-          size * (0.4 + Math.random() * 0.6),
-          size * (0.1 + Math.random() * 0.3)
-        );
-      } else {
-        // 얇은 조각
-        particleGeometry = new THREE.PlaneGeometry(
-          size * (0.5 + Math.random() * 1.0),
-          size * (0.5 + Math.random() * 1.0)
-        );
-      }
-      
-      const particle = new THREE.Mesh(particleGeometry, particleMaterial.clone());
-      
-      // 파티클 위치 설정 - 조금 랜덤하게 시작 (더 퍼짐)
-      particle.position.copy(position);
-      // 처음부터 약간 퍼져 시작
-      particle.position.x += (Math.random() - 0.5) * 0.3;  
-      particle.position.y += (Math.random() - 0.5) * 0.3;
-      particle.position.z += (Math.random() - 0.5) * 0.3;
-      
-      // 파티클 회전 랜덤 설정
-      particle.rotation.set(
-        Math.random() * Math.PI * 2,
-        Math.random() * Math.PI * 2,
-        Math.random() * Math.PI * 2
-      );
-      
-      // 파티클 속도 - 폭발하는 방향으로 퍼져나가게
-      // 폭발 방향 계산 - 중심에서 바깥으로
-      const explosionDir = new THREE.Vector3()
-        .subVectors(particle.position, position) // 현재 위치 - 중심 위치 = 퍼져나가는 방향
-        .normalize();
-      
-      // 방향이 0벡터인 경우 랜덤 방향 생성
-      if (explosionDir.lengthSq() < 0.001) {
-        explosionDir.set(
-          Math.random() * 2 - 1,
-          Math.random() * 2 - 1,
-          Math.random() * 2 - 1
-        ).normalize();
-      }
-      
-      // 속도를 랜덤하게 설정하되 최소값을 보장
-      const randomSpeed = speed * (0.7 + Math.random() * 1.3);
-      
-      const velocity = explosionDir.multiplyScalar(randomSpeed);
-      
-      // 중력 영향을 줄이기 위해 상방향 속도 추가 (더 넓게 퍼지도록)
-      velocity.y += speed * 0.4;
-      
-      // 회전 속도 추가 (더 빠르게 회전)
-      const rotationSpeed = new THREE.Vector3(
-        (Math.random() - 0.5) * 15,
-        (Math.random() - 0.5) * 15,
-        (Math.random() - 0.5) * 15
-      );
-      
-      // 파티클 수명 (다양하게 조정)
-      const life = 0.4 + Math.random() * 0.4;
-      
-      // 파티클 속성 저장
-      particle.userData = {
-        velocity: velocity,
-        rotationSpeed: rotationSpeed,
-        life: life,
-        startLife: life,
-        startOpacity: particleMaterial.opacity,
-        creationTime: startTime // 생성 시간 저장
-      };
-      
-      // 파티클 그룹에 추가
-      particleGroup.add(particle);
-      
-      // 배열에 추가
-      this.particles.push(particle);
-    }
-    
-    // 파티클 그룹 저장
-    this.particleSystems.push({
-      group: particleGroup,
-      particles: [...this.particles.slice(-count)], // 방금 생성한 파티클 참조
-      life: 0.8, // 파티클 시스템 수명 (짧게 조정)
-      startTime: startTime,
-      maxLifeTime: maxLifeTime
-    });
-    
-    return particleGroup;
-  },
-  
-  // 타겟 유형별 폭발 효과
-  createTargetExplosion(position, targetType) {
-    let color, count, size, speed;
-    
-    switch (targetType) {
-      case 'standard':
-        color = 0xff0000; // 빨간색
-        count = 25;       // 더 많은 파티클
-        size = 0.12;      // 더 큰 크기
-        speed = 20;       // 훨씬 더 빠른 속도
-        break;
-      case 'bonus':
-        color = 0xffd700; // 금색
-        count = 40;       // 더 많은 파티클
-        size = 0.15;      // 더 큰 크기
-        speed = 25;       // 훨씬 더 빠른 속도
-        break;
-      case 'penalty':
-        color = 0x00ff00; // 녹색
-        count = 30;       // 더 많은 파티클
-        size = 0.14;      // 더 큰 크기
-        speed = 18;       // 훨씬 더 빠른 속도
-        break;
-      default:
-        color = 0xff0000;
-        count = 25;
-        size = 0.12;
-        speed = 20;
-    }
-    
-    return this.createExplosion(position, color, count, size, speed);
-  },
-  
-  // 파티클 시스템 업데이트
-  update(delta) {
-    const currentTime = Date.now();
-    
-    // 각 파티클 업데이트
-    for (let i = 0; i < this.particles.length; i++) {
-      const particle = this.particles[i];
-      
-      // wall time 기준으로 오래된 파티클은 강제로 제거
-      if (particle.userData.creationTime && currentTime - particle.userData.creationTime > 1000) {
-        particle.userData.life = 0;
-        continue;
-      }
-      
-      // 파티클이 여전히 활성화되어 있는지 확인
-      if (particle.userData.life > 0) {
-        // 위치 업데이트 (더 빠른 움직임)
-        particle.position.x += particle.userData.velocity.x * delta;
-        particle.position.y += particle.userData.velocity.y * delta;
-        particle.position.z += particle.userData.velocity.z * delta;
-        
-        // 회전 업데이트 (더 빠른 회전)
-        particle.rotation.x += particle.userData.rotationSpeed.x * delta;
-        particle.rotation.y += particle.userData.rotationSpeed.y * delta;
-        particle.rotation.z += particle.userData.rotationSpeed.z * delta;
-        
-        // 중력 효과 적용 (중력 강화)
-        particle.userData.velocity.y -= 20 * delta; // 더 강한 중력으로 빠르게 떨어지게
-        
-        // 가속도 적용 (더 역동적인 움직임)
-        particle.userData.velocity.x *= (1 - delta * 1.0); // 더 빠른 감쇠
-        particle.userData.velocity.z *= (1 - delta * 1.0); // 더 빠른 감쇠
-        
-        // 수명 감소 (더 빠른 소멸)
-        particle.userData.life -= delta * 1.5; // 1.5배 빠르게 소멸
-        
-        // 페이드 아웃 효과 (불투명도 감소)
-        if (particle.material.opacity) {
-          // 시작부터 빠르게 사라지도록
-          particle.material.opacity = particle.userData.startOpacity * (particle.userData.life / particle.userData.startLife) * 0.8;
+    particles: [],       // Holds individual active particle meshes
+    particleGroups: [],  // Holds groups containing particles for organizational cleanup
+    scene: null,         // Reference to the main THREE.Scene, injected via init
+
+    /**
+     * Initializes the Particle System.
+     * @param {object} dependencies - Required dependencies.
+     * @param {THREE.Scene} dependencies.scene - The main THREE.js scene.
+     */
+    init(dependencies) {
+        if (!dependencies || !dependencies.scene) {
+            console.error("ParticleSystem.init: Missing required 'scene' dependency!");
+            return;
         }
-        
-        // 시간에 따른 크기 감소 효과
-        const lifeRatio = particle.userData.life / particle.userData.startLife;
-        
-        // 초반에는 크기가 커지다가 후반에 작아지는 효과 (더 극적으로)
-        let scaleRatio;
-        if (lifeRatio > 0.8) {
-          // 초반 20%는 크기가 빠르게 커짐 (1.0 -> 1.5)
-          scaleRatio = 1.0 + (1.0 - lifeRatio) * 2.5;
+        this.scene = dependencies.scene;
+        this.particles = [];
+        this.particleGroups = [];
+        console.log("ParticleSystem Initialized (Placeholder Implementation)");
+    },
+
+    /**
+     * Creates particles for a bullet impact effect.
+     * (Placeholder Implementation - Performance Intensive!)
+     * @param {object} config - Impact configuration data.
+     * @param {THREE.Vector3} config.position - World position of the impact.
+     * @param {THREE.Vector3} config.normal - World surface normal at the impact point.
+     * @param {number} [config.color=0xaaaaaa] - Base hex color for particles.
+     * @param {number} [config.count=15] - Number of particles to create.
+     * @param {number} [config.size=0.05] - Base size of particles.
+     * @param {number} [config.speed=8] - Base speed of particles.
+     * @param {number} [config.spread=0.6] - Spread angle (radians) relative to normal.
+     * @param {number} [config.duration=800] - Average particle lifetime (ms).
+     * @param {object} [config.materialProps] - Properties of the hit material (e.g., sparks, splinters).
+     */
+    createImpactParticles(config) {
+        // console.log("Creating Impact Particles (Placeholder):", config); // Debug
+
+        const {
+            position,
+            normal,
+            color = 0xaaaaaa,
+            count = 15,
+            size = 0.05,
+            speed = 8,
+            spread = 0.6, // Approx 35 degrees cone
+            duration = 800,
+            materialProps = {}
+        } = config;
+
+        if (!this.scene || !position || !normal) return null;
+
+        // Determine particle type based on material (simplified)
+        let particleColor = materialProps.effects?.particleColor || color;
+        let useEffects = materialProps.effects || {};
+
+        // Simple Material for placeholder (should reuse materials in InstancedMesh)
+        const particleMaterial = new THREE.MeshBasicMaterial({
+            color: particleColor,
+            transparent: true,
+            opacity: 0.9,
+            side: THREE.DoubleSide // Important for thin planes
+        });
+
+        const particleGroup = new THREE.Group();
+        this.scene.add(particleGroup);
+
+        const startTime = performance.now();
+        const maxLifeTime = duration + 500; // Add buffer
+
+        // Get orthogonal vectors to the normal for spreading
+        const tangent1 = new THREE.Vector3();
+        const tangent2 = new THREE.Vector3();
+        if(Math.abs(normal.x) > Math.abs(normal.z)){
+             tangent1.set(-normal.y, normal.x, 0).normalize();
         } else {
-          // 후반 80%는 크기가 더 빠르게 작아짐 (1.5 -> 0.1)
-          scaleRatio = lifeRatio * 1.5;
+             tangent1.set(0, -normal.z, normal.y).normalize();
         }
-        
-        particle.scale.set(scaleRatio, scaleRatio, scaleRatio);
-        
-        // 파티클 위치가 너무 아래로 내려가면 바로 제거 (바닥에 닿으면 사라짐)
-        if (particle.position.y < 0) {
-          particle.userData.life = 0;
+        tangent2.crossVectors(normal, tangent1);
+
+        for (let i = 0; i < count; i++) {
+            // --- Inefficient Geometry/Mesh Creation (Placeholder) ---
+            let particleGeometry;
+            // Vary shape slightly - placeholder logic
+            const shapeType = Math.random();
+            if (useEffects.sparks || useEffects.splinters || shapeType < 0.4) { // Simple thin shard
+                 particleGeometry = new THREE.PlaneGeometry(size * (0.5 + Math.random()), size * (0.1 + Math.random() * 0.3));
+             } else if (shapeType < 0.8) { // Small sphere chunk
+                 particleGeometry = new THREE.SphereGeometry(size * (0.2 + Math.random() * 0.4), 4, 2);
+             } else { // Small box chunk
+                 particleGeometry = new THREE.BoxGeometry(size * (0.3 + Math.random()*0.3), size * (0.3 + Math.random()*0.3), size * (0.3 + Math.random()*0.3));
+             }
+            const particle = new THREE.Mesh(particleGeometry, particleMaterial.clone()); // Clone material is also inefficient
+            // ---------------------------------------------------------
+
+            particle.position.copy(position); // Start at hit point
+
+            particle.rotation.set(Math.random() * Math.PI * 2, Math.random() * Math.PI * 2, Math.random() * Math.PI * 2);
+
+            // Calculate velocity direction within the spread cone around the normal
+            const angle = Math.random() * spread * 0.5; // Angle from normal
+            const rotationAroundNormal = Math.random() * Math.PI * 2;
+
+             // Start with normal direction
+             const velocityDir = normal.clone();
+             // Rotate towards tangent1 by 'angle'
+             velocityDir.applyAxisAngle(tangent2, angle);
+            // Rotate around original normal
+             velocityDir.applyAxisAngle(normal, rotationAroundNormal);
+
+
+            const particleSpeed = speed * (0.7 + Math.random() * 0.6); // Speed variation
+            const velocity = velocityDir.multiplyScalar(particleSpeed);
+
+            // Add slight outward velocity from center if desired
+            // velocity.addScaledVector(particle.position.clone().sub(position).normalize(), speed * 0.1);
+
+            const rotationSpeed = new THREE.Vector3(
+                (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10
+            );
+
+            const life = (duration / 1000) * (0.7 + Math.random() * 0.6); // Lifetime variation
+
+            particle.userData = {
+                velocity: velocity, rotationSpeed: rotationSpeed,
+                life: life, startLife: life,
+                startOpacity: particleMaterial.opacity,
+                creationTime: startTime // Use performance.now() based time
+            };
+
+            particleGroup.add(particle);
+            this.particles.push(particle);
         }
-      }
-    }
-    
-    // 파티클 시스템 관리
-    for (let i = this.particleSystems.length - 1; i >= 0; i--) {
-      const system = this.particleSystems[i];
-      
-      // wall time 기준으로 오래된 시스템은 강제로 제거
-      if (system.startTime && currentTime - system.startTime > system.maxLifeTime) {
-        this.cleanupParticleSystem(system, i);
-        continue;
-      }
-      
-      // 시스템 수명 감소
-      system.life -= delta;
-      
-      // 수명이 다한 파티클 시스템 정리
-      if (system.life <= 0) {
-        this.cleanupParticleSystem(system, i);
-      }
-    }
-  },
-  
-  // 파티클 시스템 정리 헬퍼 함수
-  cleanupParticleSystem(system, index) {
-    // 모든 파티클을 장면에서 제거
-    system.particles.forEach(particle => {
-      if (particle.parent) {
-        particle.parent.remove(particle);
-      }
-      
-      // 파티클 자원 해제
-      if (particle.geometry) particle.geometry.dispose();
-      if (particle.material) particle.material.dispose();
-      
-      // 배열에서 파티클 제거
-      const particleIndex = this.particles.indexOf(particle);
-      if (particleIndex !== -1) {
-        this.particles.splice(particleIndex, 1);
-      }
-    });
-    
-    // 파티클 그룹 제거
-    if (system.group.parent) {
-      system.group.parent.remove(system.group);
-    }
-    
-    // 배열에서 시스템 제거
-    this.particleSystems.splice(index, 1);
-  }
+
+        this.particleGroups.push({
+            group: particleGroup,
+            particles: [...this.particles.slice(-count)], // Reference recently added particles
+            creationTime: startTime,
+            maxLifeTime: maxLifeTime / 1000 // Store max life in seconds
+        });
+
+        return particleGroup;
+    },
+
+
+    /**
+     * Creates a large explosion effect, e.g., for obstacle destruction.
+     * (Placeholder Implementation - Performance Intensive!)
+     * @param {object} config - Explosion configuration data.
+     * @param {THREE.Vector3} config.position - World position of the explosion center.
+     * @param {number} [config.color=0xff8800] - Base hex color.
+     * @param {number} [config.count=50] - Number of particles.
+     * @param {number} [config.size=0.15] - Base size.
+     * @param {number} [config.speed=12] - Base speed.
+     * @param {number} [config.duration=1500] - Average lifetime (ms).
+     * @param {object} [config.materialProps] - Properties of the destroyed material.
+     */
+    createExplosion(config) {
+        // console.log("Creating Explosion (Placeholder):", config); // Debug
+
+         const {
+            position,
+            color = 0xff8800,
+            count = 50,
+            size = 0.15,
+            speed = 12,
+            duration = 1500,
+            materialProps = {}
+        } = config;
+
+         if (!this.scene || !position ) return null;
+
+         // This implementation reuses the _createDebrisCluster logic but with different parameters.
+         // In a real system, this might trigger smoke, fire, and debris.
+         return this._createDebrisCluster(position, materialProps.effects?.particleColor || color, count, size, speed, duration);
+    },
+
+    /**
+     * Internal helper to create a cluster of debris-like particles.
+     * (Placeholder Implementation - Performance Intensive!)
+     * Use createImpactParticles or createExplosion externally.
+     */
+     _createDebrisCluster(position, color, count, size, speed, duration) {
+
+        // Simple Material for placeholder
+        const particleMaterial = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.95,
+             side: THREE.DoubleSide
+        });
+
+        const particleGroup = new THREE.Group();
+        this.scene.add(particleGroup);
+
+        const startTime = performance.now();
+        const maxLifeTime = duration + 800; // Add buffer
+
+        for (let i = 0; i < count; i++) {
+            // --- Inefficient Geometry/Mesh Creation (Placeholder) ---
+             let particleGeometry;
+             const shapeType = Math.random();
+              if (shapeType < 0.4) { // Shard
+                  particleGeometry = new THREE.PlaneGeometry(size * (0.5 + Math.random()), size * (0.2 + Math.random() * 0.4));
+              } else if (shapeType < 0.8) { // Sphere chunk
+                  particleGeometry = new THREE.SphereGeometry(size * (0.2 + Math.random() * 0.5), 5, 3);
+              } else { // Box chunk
+                  particleGeometry = new THREE.BoxGeometry(size * (0.4 + Math.random()*0.4), size * (0.4 + Math.random()*0.4), size * (0.4 + Math.random()*0.4));
+              }
+            const particle = new THREE.Mesh(particleGeometry, particleMaterial.clone());
+            // ---------------------------------------------------------
+
+            // Start slightly offset from center
+            particle.position.copy(position).add(
+                 new THREE.Vector3( (Math.random()-0.5) * size * 2, (Math.random()-0.5) * size * 2, (Math.random()-0.5) * size * 2 )
+             );
+
+            particle.rotation.set(Math.random() * Math.PI * 2, Math.random() * Math.PI * 2, Math.random() * Math.PI * 2);
+
+            // Velocity outward from center
+            const velocityDir = new THREE.Vector3().randomDirection(); // Random direction
+             const particleSpeed = speed * (0.5 + Math.random());
+             const velocity = velocityDir.multiplyScalar(particleSpeed);
+             // Add slight upward bias to explosions
+             velocity.y += speed * 0.3 * Math.random();
+
+
+            const rotationSpeed = new THREE.Vector3(
+                (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8
+            );
+
+            const life = (duration / 1000) * (0.6 + Math.random() * 0.8); // Longer, more varied lifetime for explosions
+
+            particle.userData = {
+                velocity: velocity, rotationSpeed: rotationSpeed,
+                life: life, startLife: life,
+                startOpacity: particleMaterial.opacity,
+                creationTime: startTime
+            };
+
+            particleGroup.add(particle);
+            this.particles.push(particle);
+        }
+
+         this.particleGroups.push({
+            group: particleGroup,
+            particles: [...this.particles.slice(-count)],
+            creationTime: startTime,
+            maxLifeTime: maxLifeTime / 1000 // Store max life in seconds
+        });
+
+        return particleGroup;
+    },
+
+
+    /**
+     * Updates particle positions, lifetimes, and opacity.
+     * @param {number} delta - Time delta since last frame (in seconds).
+     */
+    update(delta) {
+        if (!this.scene) return;
+
+        const now = performance.now() / 1000; // Current time in seconds
+        const removedParticles = []; // Keep track of particles removed in this frame
+
+        // Update individual particles
+        for (let i = this.particles.length - 1; i >= 0; i--) { // Iterate backwards for safe removal
+            const particle = this.particles[i];
+            const data = particle.userData;
+
+            if (!data || data.life <= 0) { // Check if particle should be removed
+                 removedParticles.push({particle: particle, index: i});
+                 continue; // Skip update if life is zero or less
+            }
+
+
+             // Reduce life
+             data.life -= delta;
+
+             // If life ended this frame, mark for removal and skip further updates
+             if(data.life <= 0) {
+                  removedParticles.push({particle: particle, index: i});
+                  continue;
+             }
+
+
+            // Update position
+            particle.position.addScaledVector(data.velocity, delta);
+
+            // Update rotation
+            particle.rotation.x += data.rotationSpeed.x * delta;
+            particle.rotation.y += data.rotationSpeed.y * delta;
+            particle.rotation.z += data.rotationSpeed.z * delta;
+
+            // Apply gravity
+             const gravity = 9.8 * 2.0; // Stronger gravity for particles
+            data.velocity.y -= gravity * delta;
+
+            // Apply damping/drag (simple linear damping)
+            data.velocity.multiplyScalar(Math.max(0, 1.0 - delta * 1.5)); // Dampen faster
+
+            // Fade out based on life
+             if (particle.material && particle.material.opacity !== undefined) {
+                 particle.material.opacity = Math.max(0, data.startOpacity * (data.life / data.startLife));
+             }
+
+             // Optional: Shrink near end of life
+             if (data.life < data.startLife * 0.3) {
+                const scale = Math.max(0.1, data.life / (data.startLife * 0.3));
+                 particle.scale.setScalar(scale);
+             }
+
+
+             // Simple floor collision/removal
+             if (particle.position.y < -0.1) {
+                  data.life = 0; // Mark for removal
+                  removedParticles.push({particle: particle, index: i});
+             }
+        }
+
+         // Remove particles marked for removal (ensures indices are correct)
+         // Sort by index descending to remove from end without shifting indices
+         removedParticles.sort((a, b) => b.index - a.index);
+         removedParticles.forEach(item => {
+             const particle = item.particle;
+             if (particle.parent) {
+                 particle.parent.remove(particle);
+             }
+             // Dispose resources
+             particle.geometry?.dispose();
+             // Material might be shared in a real system, handle disposal carefully
+             if (particle.material && typeof particle.material.dispose === 'function') {
+                // Check if it's a cloned material specific to this particle
+                // In this placeholder, we clone, so we dispose.
+                 particle.material.dispose();
+             }
+             this.particles.splice(item.index, 1); // Remove from active array
+         });
+
+
+        // Update and cleanup organizational groups
+        for (let i = this.particleGroups.length - 1; i >= 0; i--) {
+            const system = this.particleGroups[i];
+            const systemAge = now - (system.creationTime / 1000); // Age in seconds
+
+            // Remove group if it's too old OR contains no more active particles managed by this system
+             let hasActiveParticles = false;
+             // Extremely inefficient check for placeholder. In reality, pool would manage lifetime.
+             // for(const p of system.particles){
+             //     if(this.particles.includes(p)){ hasActiveParticles = true; break;}
+             // }
+
+            if (systemAge > system.maxLifeTime /* || !hasActiveParticles */ ) {
+                 if (system.group.parent) {
+                     system.group.parent.remove(system.group);
+                 }
+                 // Ensure particles in this group were already handled above
+                 // or add specific cleanup here if needed.
+                 this.particleGroups.splice(i, 1);
+            }
+        }
+    },
 };
+
+export default ParticleSystem;
