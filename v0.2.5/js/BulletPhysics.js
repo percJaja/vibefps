@@ -1,1140 +1,1350 @@
 /**
- * BulletPhysics.js - 총알 물리 효과 시스템
- * 
- * 총알의 물리적 시뮬레이션을 처리하며 장애물과의 상호작용을 구현합니다.
- * - 장애물 충돌 시 정지
- * - 표면 반사 (튕김 효과)
- * - 장애물 파손 및 파괴
- * - 사실적인 궤적 및 중력 효과
+ * @file BulletPhysics.js
+ * @description Advanced bullet physics simulation system for 3D games.
+ *
+ * Handles realistic bullet trajectory, collisions, material interactions,
+ * ricochets, penetration checks, and object destruction. Optimized for performance
+ * using object pooling and prepared for integration with a full physics engine.
+ *
+ * @requires three
  */
-const BulletPhysics = {
-  // 총알 효과 관련 설정
-  settings: {
-    enabled: true,                  // 총알 물리 효과 활성화 여부
-    maxBounces: 2,                  // 최대 튕김 횟수
-    maxDistance: 100,               // 최대 발사 거리
-    bounceEnergyLoss: 0.4,          // 튕길 때마다 손실되는 에너지 (0-1)
-    obstacleDestructionThreshold: 0.9, // 장애물 파손 임계값 (0-1) - 더 높게 설정하여 파괴가 어렵게 함
-    bulletSpeed: 300,               // 총알 속도 (미터/초)
-    gravity: 9.8,                   // 중력 영향
-    renderTrail: true,              // 총알 궤적 시각화 여부
-    obstacleMovementFactor: 0.05,   // 장애물이 얼마나 움직이는지 (0-1) - 낮게 설정하여 움직임 최소화
-    partialDestructionEnabled: true, // 부분 파괴 기능 활성화 여부
-  },
 
-  // 활성화된 총알 목록
-  activeBullets: [],
+import * as THREE from 'three';
 
-  // 파손된 장애물 추적
-  damagedObstacles: {},
+/**
+ * Placeholder/Interface definition for a Material Properties Manager.
+ * !!! IMPORTANT: This needs to be implemented externally and provided
+ *     during BulletPhysicsSystem.init() !!!
+ * It should return material properties based on a name.
+ */
+const MaterialManager = {
+    /**
+     * @typedef {object} MaterialEffectData
+     * @property {number} particleColor - Default hex color for particles.
+     * @property {string} decal - Name/ID of the decal texture/type.
+     * @property {string} sound - Name/ID of the hit sound effect.
+     * @property {boolean} [sparks] - If true, generate spark particles.
+     * @property {boolean} [splinters] - If true, generate splinter particles.
+     * @property {boolean} [noDecal] - If true, don't generate a decal.
+     * @property {boolean} [splash] - If true, generate a water splash effect.
+     * @property {boolean} [shatter] - If true, generate a glass shatter effect.
+     */
 
-  // 효과 관련 리소스
-  effects: {
-    bulletHitMeshes: [],
-    bulletTrails: []
-  },
+    /**
+     * @typedef {object} MaterialProperties
+     * @property {number} hardness - Resistance to penetration/ricochet (0-1). Higher is harder.
+     * @property {number} density - Material density (used for penetration, potentially).
+     * @property {number} friction - Surface friction (affects ricochet indirectly).
+     * @property {MaterialEffectData} effects - Defines visual/audio effects on hit.
+     * @property {number} [penetrationMultiplier=1.0] - Modifies ease of penetration (e.g., >1 for foliage).
+     * @property {number} [dragMultiplier=1.0] - Modifies air/water drag when inside (e.g., >1 for water).
+     * @property {boolean} [brittle=false] - If true, fractures/destroys more easily.
+     * @property {string} [name='default'] - The name of the material.
+     */
 
-  /**
-   * 초기화 함수
-   */
-  init() {
-    this.activeBullets = [];
-    this.damagedObstacles = {};
-    this.effects = {
-      bulletHitMeshes: [],
-      bulletTrails: []
-    };
+    /**
+     * Gets properties for a given material name.
+     * @param {string} [materialName='default'] - The name identifier of the material.
+     * @returns {MaterialProperties} The properties of the material.
+     */
+    getMaterialProperties: (materialName = 'default') => {
+        // console.warn("Using placeholder MaterialManager.getMaterialProperties. Implement and provide externally!");
+        // Default implementation (replace with your actual manager)
+        const properties = {
+            default: { name: 'default', hardness: 0.5, density: 1.0, friction: 0.5, effects: { particleColor: 0xaaaaaa, decal: 'generic_hole', sound: 'hit_generic' } },
+            concrete: { name: 'concrete', hardness: 0.8, density: 2.4, friction: 0.7, effects: { particleColor: 0x888888, decal: 'concrete_hole', sound: 'hit_concrete' } },
+            metal: { name: 'metal', hardness: 0.9, density: 7.8, friction: 0.3, effects: { particleColor: 0xcccccc, sparks: true, decal: 'metal_hole', sound: 'hit_metal' } },
+            wood: { name: 'wood', hardness: 0.4, density: 0.7, friction: 0.6, effects: { particleColor: 0x8B4513, splinters: true, decal: 'wood_hole', sound: 'hit_wood' } },
+            foliage: { name: 'foliage', hardness: 0.1, density: 0.1, friction: 0.9, effects: { particleColor: 0x00cc00, noDecal: true, sound: 'hit_foliage'}, penetrationMultiplier: 1.5 },
+            water: { name: 'water', hardness: 0.2, density: 1.0, friction: 0.9, effects: { particleColor: 0x0088ff, splash: true, noDecal: true, sound: 'hit_water'}, dragMultiplier: 5.0 },
+            glass: { name: 'glass', hardness: 0.6, density: 2.5, friction: 0.1, effects: { particleColor: 0xeeeeff, shatter: true, decal: 'glass_shatter', sound: 'hit_glass'}, brittle: true },
+        };
+        return properties[materialName] || properties.default;
+    },
 
-    // 이벤트 시스템 리스너 등록
-    if (typeof EventSystem !== 'undefined') {
-      // 발사 이벤트 수신
-      EventSystem.on('bulletFired', this.handleBulletFired.bind(this));
-
-      // 게임 상태 변화 이벤트 수신
-      EventSystem.on('gameStateChanged', this.handleGameStateChange.bind(this));
-    }
-
-    console.log('BulletPhysics 시스템 초기화 완료');
-  },
-
-  /**
-   * 총알 발사 이벤트 처리
-   * @param {Object} data - 발사 이벤트 데이터
-   */
-  handleBulletFired(data) {
-    if (!this.settings.enabled) return;
-
-    const { origin, direction, weapon } = data;
-    this.createBullet(origin, direction, weapon);
-  },
-
-  /**
-   * 게임 상태 변화 이벤트 처리
-   * @param {Object} data - 게임 상태 데이터
-   */
-  handleGameStateChange(data) {
-    if (data.state === 'gameOver' || data.state === 'menu') {
-      // 게임 종료 시 모든 총알 제거
-      this.clearAllBullets();
-    }
-  },
-
-  /**
-   * 새 총알 생성
-   * @param {THREE.Vector3} origin - 발사 위치
-   * @param {THREE.Vector3} direction - 발사 방향
-   * @param {string} weapon - 무기 유형 (기본값: 'standard')
-   */
-  createBullet(origin, direction, weapon = 'standard') {
-    // 무기 유형에 따른 설정
-    const weaponSettings = this.getWeaponSettings(weapon);
-
-    // 정확한 총알 시작 위치와 방향 계산
-    // 총알은 항상 카메라 위치 및 방향과 일치해야 함
-    const accurateOrigin = origin.clone();
-    
-    // 카메라가 보는 정확한 방향 사용
-    const accurateDirection = direction.clone().normalize();
-    
-    // 새 총알 객체 생성
-    const bullet = {
-      position: accurateOrigin.clone(),
-      initialPosition: accurateOrigin.clone(),
-      direction: accurateDirection.clone(),
-      initialDirection: accurateDirection.clone(),
-      velocity: accurateDirection.clone().multiplyScalar(weaponSettings.speed),
-      bounceCount: 0,
-      maxBounces: weaponSettings.maxBounces,
-      energy: 1.0, // 시작 에너지 (최대)
-      weapon: weapon,
-      destructionPower: weaponSettings.destructionPower,
-      creationTime: Date.now(),
-      lastPosition: accurateOrigin.clone(), // 궤적 렌더링용
-      // 시각 효과용 메시
-      mesh: this.createBulletMesh(weaponSettings),
-      trail: this.settings.renderTrail ? this.createBulletTrail(accurateOrigin) : null
-    };
-
-    // 메시 초기 위치 설정
-    if (bullet.mesh) {
-      bullet.mesh.position.copy(accurateOrigin);
-    }
-
-    // 총알 목록에 추가
-    this.activeBullets.push(bullet);
-
-    // 발사 소리 재생
-    if (typeof AudioManager !== 'undefined') {
-      AudioManager.play('shoot', { type: weapon });
-    }
-
-    return bullet;
-  },
-
-  /**
-   * 무기 유형별 설정 반환
-   * @param {string} weapon - 무기 유형
-   * @returns {Object} 무기 설정
-   */
-  getWeaponSettings(weapon) {
-    const settings = {
-      standard: {
-        speed: this.settings.bulletSpeed,
-        maxBounces: this.settings.maxBounces,
-        destructionPower: 0.3,
-        size: 0.025, // 총알 크기 줄임
-        color: 0xffcc00
-      },
-      powerful: {
-        speed: this.settings.bulletSpeed * 1.5,
-        maxBounces: Math.max(1, this.settings.maxBounces - 1),
-        destructionPower: 0.5,
-        size: 0.035, // 총알 크기 줄임
-        color: 0xff4400
-      },
-      bouncy: {
-        speed: this.settings.bulletSpeed * 0.8,
-        maxBounces: this.settings.maxBounces + 2,
-        destructionPower: 0.2,
-        size: 0.02, // 총알 크기 줄임
-        color: 0x00ccff
-      }
-    };
-
-    return settings[weapon] || settings.standard;
-  },
-
-  /**
-   * 총알 메시 생성
-   * @param {Object} weaponSettings - 무기 설정
-   * @returns {THREE.Mesh} 총알 메시
-   */
-  createBulletMesh(weaponSettings) {
-    if (!Graphics || !Graphics.scene) return null;
-
-    // 총알 지오메트리 및 재질
-    const bulletGeometry = new THREE.SphereGeometry(weaponSettings.size, 8, 8);
-    
-    // MeshBasicMaterial은 emissive 속성이 없으므로 MeshStandardMaterial 사용
-    // 성능 최적화가 필요하면 MeshPhongMaterial이나 단순 MeshBasicMaterial로 대체 가능
-    const bulletMaterial = new THREE.MeshStandardMaterial({ 
-      color: weaponSettings.color,
-      emissive: weaponSettings.color,
-      emissiveIntensity: 0.5,
-      metalness: 0.7,
-      roughness: 0.3
-    });
-
-    // 메시 생성
-    const bulletMesh = new THREE.Mesh(bulletGeometry, bulletMaterial);
-    bulletMesh.castShadow = true;
-
-    // 씬에 추가
-    Graphics.scene.add(bulletMesh);
-
-    return bulletMesh;
-  },
-
-  /**
-   * 총알 궤적 효과 생성
-   * @param {THREE.Vector3} startPosition - 시작 위치
-   * @returns {THREE.Line} 궤적 라인
-   */
-  createBulletTrail(startPosition) {
-    if (!Graphics || !Graphics.scene) return null;
-
-    // 궤적 재질
-    const trailMaterial = new THREE.LineBasicMaterial({ 
-      color: 0xffcc00,
-      transparent: true,
-      opacity: 0.7,
-      linewidth: 1
-    });
-
-    // 궤적 지오메트리 (초기에 시작 위치만 포함)
-    const trailGeometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(3); // 최초 1개 점 (x, y, z)
-    
-    // 시작 위치 설정
-    positions[0] = startPosition.x;
-    positions[1] = startPosition.y;
-    positions[2] = startPosition.z;
-    
-    trailGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-    // 라인 생성
-    const trail = new THREE.Line(trailGeometry, trailMaterial);
-
-    // 씬에 추가
-    Graphics.scene.add(trail);
-
-    return trail;
-  },
-
-  /**
-   * 총알 궤적 업데이트
-   * @param {Object} bullet - 총알 객체
-   */
-  updateBulletTrail(bullet) {
-    if (!bullet.trail) return;
-
-    // 현재 지오메트리에서 이전 위치 배열 가져오기
-    const positions = bullet.trail.geometry.attributes.position.array;
-    const positionCount = positions.length / 3;
-
-    // 새 위치 배열 생성 (기존 + 새 위치)
-    const newPositions = new Float32Array((positionCount + 1) * 3);
-
-    // 기존 위치 복사
-    for (let i = 0; i < positions.length; i++) {
-      newPositions[i] = positions[i];
-    }
-
-    // 새 위치 추가
-    newPositions[positions.length] = bullet.position.x;
-    newPositions[positions.length + 1] = bullet.position.y;
-    newPositions[positions.length + 2] = bullet.position.z;
-
-    // 최대 길이 제한 (너무 길어지지 않도록)
-    const maxTrailPoints = 20;
-    let finalPositions = newPositions;
-
-    if (positionCount >= maxTrailPoints) {
-      finalPositions = new Float32Array(maxTrailPoints * 3);
-      // 첫 번째 점은 항상 유지하고, 나머지 점들을 시프트
-      for (let i = 0; i < maxTrailPoints * 3; i++) {
-        finalPositions[i] = newPositions[i + 3]; // 첫 점 이후부터 복사
-      }
-    }
-
-    // 지오메트리 업데이트
-    bullet.trail.geometry.setAttribute(
-      'position', 
-      new THREE.BufferAttribute(finalPositions, 3)
-    );
-    bullet.trail.geometry.attributes.position.needsUpdate = true;
-  },
-
-  /**
-   * 총알 히트 이펙트 생성
-   * @param {THREE.Vector3} position - 충돌 위치
-   * @param {THREE.Vector3} normal - 충돌 표면 법선
-   * @param {string} surfaceType - 표면 유형 ('obstacle', 'wall', 'floor' 등)
-   */
-  createHitEffect(position, normal, surfaceType = 'obstacle') {
-    // 충돌 효과음 재생
-    if (typeof AudioManager !== 'undefined') {
-      AudioManager.play('hit', { 
-        position: position,
-        surfaceType: surfaceType
-      });
-    }
-
-    // 충돌 이펙트 생성 (파티클 등)
-    if (typeof ParticleSystem !== 'undefined' && ParticleSystem.createExplosion) {
-      // 표면 유형에 따라 다른 효과 생성
-      let color, count, size, speed;
-
-      switch (surfaceType) {
-        case 'metal':
-          color = 0xcccccc; // 금속성 파편
-          count = 15;       
-          size = 0.05;      
-          speed = 15;
-          break;
-        case 'wood':
-          color = 0x8B4513; // 나무 색
-          count = 20;       
-          size = 0.08;      
-          speed = 10;
-          break;
-        case 'wall':
-          color = 0xbbbbbb; // 벽 파편
-          count = 10;       
-          size = 0.1;      
-          speed = 8;
-          break;
-        default:
-          color = 0xdddddd; // 기본 파편
-          count = 12;       
-          size = 0.07;      
-          speed = 12;
-      }
-
-      // 파티클 효과 생성
-      ParticleSystem.createExplosion(position, color, count, size, speed);
-    }
-
-    // 총알 흔적 (총알 구멍) 생성
-    this.createBulletHoleMesh(position, normal, surfaceType);
-  },
-
-  /**
-   * 총알 구멍 메시 생성
-   * @param {THREE.Vector3} position - 충돌 위치
-   * @param {THREE.Vector3} normal - 충돌 표면 법선
-   * @param {string} surfaceType - 표면 유형
-   */
-  createBulletHoleMesh(position, normal, surfaceType) {
-    if (!Graphics || !Graphics.scene) return;
-
-    // 총알 구멍 재질 (표면 유형에 따라 다름)
-    let bulletHoleColor;
-    switch (surfaceType) {
-      case 'metal': bulletHoleColor = 0x333333; break;
-      case 'wood': bulletHoleColor = 0x1a0d00; break;
-      case 'wall': bulletHoleColor = 0x222222; break;
-      default: bulletHoleColor = 0x111111;
-    }
-
-    // 총알 구멍 메시 생성 (얇은 원통형)
-    const holeGeometry = new THREE.CircleGeometry(0.05, 8);
-    const holeMaterial = new THREE.MeshBasicMaterial({ 
-      color: bulletHoleColor,
-      side: THREE.DoubleSide
-    });
-
-    const holeMesh = new THREE.Mesh(holeGeometry, holeMaterial);
-
-    // 충돌 지점에 배치
-    holeMesh.position.copy(position);
-
-    // 표면에 정확히 위치시키기 위해 법선 방향으로 살짝 이동
-    holeMesh.position.add(normal.clone().multiplyScalar(0.01));
-
-    // 표면에 향하도록 회전
-    holeMesh.lookAt(position.clone().add(normal));
-
-    // 씬에 추가
-    Graphics.scene.add(holeMesh);
-
-    // 효과 배열에 추가 (나중에 정리하기 위해)
-    this.effects.bulletHitMeshes.push({
-      mesh: holeMesh,
-      creationTime: Date.now(),
-      lifetime: 10000  // 10초 후 제거
-    });
-  },
-
-  /**
-   * 장애물 파손 효과 생성
-   * @param {Object} obstacle - 파손할 장애물 객체
-   * @param {THREE.Vector3} hitPosition - 충돌 위치
-   * @param {number} damageAmount - 파손 정도 (0-1)
-   */
-  createObstacleDestructionEffect(obstacle, hitPosition, damageAmount) {
-    if (!obstacle || !obstacle.mesh) return;
-    
-    // 장애물이 석재(파괴 불가능) 타입인지 확인
-    if (obstacle.type === 'stone' || obstacle.material === 'stone') {
-      // 석재 장애물은 파손되지 않음, 대신 단단한 표면 효과만 생성
-      if (typeof ParticleSystem !== 'undefined') {
-        ParticleSystem.createExplosion(
-          hitPosition,
-          0x888888, // 석재 파편 색상
-          5,        // 적은 수의 파편
-          0.05,     // 작은 크기
-          8         // 느린 속도
-        );
-      }
-      return;
-    }
-
-    // 장애물 ID 추출 (메시의 uuid 사용)
-    const obstacleId = obstacle.mesh.uuid;
-
-    // 이미 파손 상태 추적 중인지 확인
-    if (!this.damagedObstacles[obstacleId]) {
-      this.damagedObstacles[obstacleId] = {
-        damage: 0,
-        hitPoints: [],
-        originalScale: obstacle.mesh.scale.clone(),
-        originalPosition: obstacle.mesh.position.clone(),
-        segments: this.createObstacleSegments(obstacle) // 장애물을 가상의 세그먼트로 분할
-      };
-    }
-
-    // 파손 정도 업데이트
-    this.damagedObstacles[obstacleId].damage += damageAmount;
-    this.damagedObstacles[obstacleId].hitPoints.push(hitPosition.clone());
-
-    // 파손 시각 효과 적용
-    const totalDamage = this.damagedObstacles[obstacleId].damage;
-    
-    // 맞은 위치에 가장 가까운 세그먼트를 찾아 파손 표시
-    if (this.settings.partialDestructionEnabled && this.damagedObstacles[obstacleId].segments) {
-      this.damageNearestSegment(this.damagedObstacles[obstacleId], hitPosition, damageAmount);
-    }
-
-    // 장애물 시각적 변형 (파손 정도에 따라)
-    // 움직임 요소를 줄이기 위해 obstacleMovementFactor 적용
-    const moveFactor = this.settings.obstacleMovementFactor;
-    const scaleFactor = Math.max(0.85, 1 - totalDamage * 0.15); // 축소 효과 감소
-    
-    obstacle.mesh.scale.set(
-      this.damagedObstacles[obstacleId].originalScale.x * scaleFactor,
-      this.damagedObstacles[obstacleId].originalScale.y * scaleFactor,
-      this.damagedObstacles[obstacleId].originalScale.z * scaleFactor
-    );
-
-    // 약간의 회전 변화로 파손 효과 표현 (감소된 움직임)
-    obstacle.mesh.rotation.x += (Math.random() - 0.5) * moveFactor * totalDamage;
-    obstacle.mesh.rotation.y += (Math.random() - 0.5) * moveFactor * totalDamage;
-    obstacle.mesh.rotation.z += (Math.random() - 0.5) * moveFactor * totalDamage;
-
-    // 파손된 장애물의 물리 바디 업데이트 (크기 축소)
-    if (obstacle.body) {
-      // CannonJS에서는 물리 바디 스케일 직접 변경이 어려움
-      // 대신 충돌 영역을 조정
-      obstacle.body.shapes.forEach(shape => {
-        if (shape.halfExtents) {
-          shape.halfExtents.x *= scaleFactor;
-          shape.halfExtents.y *= scaleFactor;
-          shape.halfExtents.z *= scaleFactor;
-          shape.updateConvexPolyhedronRepresentation();
+    /**
+     * Determines the material name from a THREE.js object.
+     * Checks userData first, then material name.
+     * @param {THREE.Object3D} object - The scene object that was hit.
+     * @returns {string} The determined material name.
+     */
+    getMaterialNameFromObject: (object) => {
+        if (!object) return 'default';
+        // Prioritize userData for explicit type setting
+        if (object.userData && object.userData.materialType) return object.userData.materialType;
+        // Fallback to THREE.Material name property
+        if (object.material && object.material.name && typeof object.material.name === 'string') {
+            return object.material.name.toLowerCase();
         }
-      });
+        // Add more sophisticated checks if needed (e.g., object name patterns)
+        return 'default';
     }
-
-    // 완전 파괴 여부 확인 (임계값 초과 시)
-    if (totalDamage >= this.settings.obstacleDestructionThreshold) {
-      if (this.settings.partialDestructionEnabled) {
-        // 부분 파괴 모드에서는 세그먼트의 70% 이상이 파괴된 경우에만 완전 파괴
-        const segments = this.damagedObstacles[obstacleId].segments;
-        const destroyedSegments = segments.filter(s => s.destroyed).length;
-        const destructionRatio = destroyedSegments / segments.length;
-        
-        if (destructionRatio > 0.7) {
-          this.destroyObstacle(obstacle, obstacleId);
-        }
-      } else {
-        // 일반 모드에서는 임계값 도달 시 바로 파괴
-        this.destroyObstacle(obstacle, obstacleId);
-      }
-    }
-
-    // 파편 효과 생성
-    if (typeof ParticleSystem !== 'undefined') {
-      // 파손 지점에서 작은 파편 생성
-      const fragmentColor = obstacle.mesh.material.color 
-                            ? obstacle.mesh.material.color.getHex() 
-                            : 0x999999;
-
-      ParticleSystem.createExplosion(
-        hitPosition,
-        fragmentColor,
-        Math.floor(5 + damageAmount * 20),  // 파손 정도에 따른 파편 개수
-        0.1,  // 크기
-        10    // 속도
-      );
-    }
-  },
-  
-  /**
-   * 장애물을 가상의 세그먼트(부분)으로 분할
-   * @param {Object} obstacle - 분할할 장애물
-   * @returns {Array} 세그먼트 배열
-   */
-  createObstacleSegments(obstacle) {
-    if (!obstacle || !obstacle.mesh) return [];
-    
-    const segments = [];
-    // 장애물 크기에 따라 8-27개 세그먼트로 분할 (2x2x2 ~ 3x3x3)
-    
-    const size = obstacle.mesh.geometry.parameters;
-    const width = size.width || 1;
-    const height = size.height || 1;
-    const depth = size.depth || 1;
-    
-    // 크기에 따라 분할 단위 결정 (크면 더 많이 분할)
-    const divX = width > 2 ? 3 : 2;
-    const divY = height > 2 ? 3 : 2;
-    const divZ = depth > 2 ? 3 : 2;
-    
-    const segWidth = width / divX;
-    const segHeight = height / divY;
-    const segDepth = depth / divZ;
-    
-    const obstaclePos = obstacle.mesh.position;
-    const obstacleRot = obstacle.mesh.rotation;
-    
-    // 가상의 세그먼트 생성 (x,y,z 위치에 따라)
-    for (let x = 0; x < divX; x++) {
-      for (let y = 0; y < divY; y++) {
-        for (let z = 0; z < divZ; z++) {
-          // 세그먼트의 로컬 좌표 계산
-          const localX = (x - (divX-1)/2) * segWidth;
-          const localY = (y - (divY-1)/2) * segHeight;
-          const localZ = (z - (divZ-1)/2) * segDepth;
-          
-          // 회전 변환 적용 (간소화된 계산)
-          const segment = {
-            x: localX,
-            y: localY,
-            z: localZ,
-            position: new THREE.Vector3(
-              obstaclePos.x + localX,
-              obstaclePos.y + localY,
-              obstaclePos.z + localZ
-            ),
-            size: new THREE.Vector3(segWidth, segHeight, segDepth),
-            health: 1.0,  // 초기 세그먼트 상태 (1 = 100% 건강)
-            destroyed: false
-          };
-          
-          segments.push(segment);
-        }
-      }
-    }
-    
-    return segments;
-  },
-  
-  /**
-   * 충돌 위치와 가장 가까운 세그먼트에 피해 적용
-   * @param {Object} obstacleData - 장애물 데이터
-   * @param {THREE.Vector3} hitPosition - 충돌 위치
-   * @param {number} damage - 피해량
-   */
-  damageNearestSegment(obstacleData, hitPosition, damage) {
-    if (!obstacleData || !obstacleData.segments || obstacleData.segments.length === 0) return;
-    
-    // 가장 가까운 세그먼트 찾기
-    let nearestIndex = 0;
-    let minDistance = Infinity;
-    
-    for (let i = 0; i < obstacleData.segments.length; i++) {
-      const segment = obstacleData.segments[i];
-      if (segment.destroyed) continue; // 이미 파괴된 세그먼트는 건너뜀
-      
-      const distance = segment.position.distanceTo(hitPosition);
-      if (distance < minDistance) {
-        minDistance = distance;
-        nearestIndex = i;
-      }
-    }
-    
-    // 가장 가까운 세그먼트에 피해 적용
-    const nearestSegment = obstacleData.segments[nearestIndex];
-    nearestSegment.health -= damage * 2; // 세그먼트에 더 많은 피해 적용 (집중 피해)
-    
-    // 세그먼트가 파괴되었는지 확인
-    if (nearestSegment.health <= 0 && !nearestSegment.destroyed) {
-      nearestSegment.destroyed = true;
-      
-      // 파괴된 세그먼트에서 파편 생성
-      if (typeof ParticleSystem !== 'undefined') {
-        const color = obstacleData.mesh ? 
-                    (obstacleData.mesh.material.color ? obstacleData.mesh.material.color.getHex() : 0x999999) 
-                    : 0x999999;
-                    
-        ParticleSystem.createExplosion(
-          nearestSegment.position,
-          color,
-          15,     // 파편 개수
-          0.08,   // 파편 크기
-          12      // 파편 속도
-        );
-      }
-    }
-  },
-
-  /**
-   * 장애물 완전 파괴
-   * @param {Object} obstacle - 파괴할 장애물 객체
-   * @param {string} obstacleId - 장애물 ID
-   */
-  destroyObstacle(obstacle, obstacleId) {
-    // 파괴 효과음 재생
-    if (typeof AudioManager !== 'undefined') {
-      AudioManager.play('obstacleDestruction', { 
-        position: obstacle.mesh.position.clone()
-      });
-    }
-
-    // 큰 폭발 이펙트 생성
-    if (typeof ParticleSystem !== 'undefined') {
-      const color = obstacle.mesh.material.color 
-                  ? obstacle.mesh.material.color.getHex() 
-                  : 0x999999;
-
-      ParticleSystem.createExplosion(
-        obstacle.mesh.position.clone(),
-        color,
-        40,  // 많은 파편
-        0.15, // 큰 파편
-        15    // 빠른 속도
-      );
-    }
-
-    // 파괴된 장애물 메시 제거
-    if (Graphics && Graphics.scene) {
-      Graphics.scene.remove(obstacle.mesh);
-    }
-
-    // 파괴된 장애물 물리 바디 제거
-    if (Physics && Physics.world && obstacle.body) {
-      Physics.world.remove(obstacle.body);
-    }
-
-    // 장애물 파손 추적 정보 제거
-    delete this.damagedObstacles[obstacleId];
-
-    // Environment.obstacles 배열에서 제거
-    if (Environment && Environment.obstacles) {
-      const obstacleIndex = Environment.obstacles.findIndex(o => o.mesh === obstacle.mesh);
-      if (obstacleIndex !== -1) {
-        Environment.obstacles.splice(obstacleIndex, 1);
-      }
-    }
-
-    // 이벤트 발행 (다른 시스템이 반응할 수 있도록)
-    if (typeof EventSystem !== 'undefined') {
-      EventSystem.emit('obstacleDestroyed', {
-        position: obstacle.mesh.position.clone(),
-        obstacleId: obstacleId
-      });
-    }
-  },
-
-  /**
-   * 반사 벡터 계산 (튕김 방향)
-   * @param {THREE.Vector3} velocity - 입사 속도 벡터
-   * @param {THREE.Vector3} normal - 충돌 표면 법선 벡터
-   * @returns {THREE.Vector3} 반사 벡터
-   */
-  calculateReflection(velocity, normal) {
-    // 반사 공식: R = V - 2 * (V·N) * N
-    const dot = velocity.dot(normal);
-    return velocity.clone().sub(
-      normal.clone().multiplyScalar(2 * dot)
-    );
-  },
-
-  /**
-   * 총알 제거
-   * @param {Object} bullet - 제거할 총알 객체
-   * @param {number} index - 총알 배열 인덱스
-   */
-  removeBullet(bullet, index) {
-    // 총알 메시 제거
-    if (bullet.mesh && Graphics && Graphics.scene) {
-      Graphics.scene.remove(bullet.mesh);
-      if (bullet.mesh.geometry) bullet.mesh.geometry.dispose();
-      if (bullet.mesh.material) bullet.mesh.material.dispose();
-    }
-
-    // 궤적 제거
-    if (bullet.trail && Graphics && Graphics.scene) {
-      Graphics.scene.remove(bullet.trail);
-      if (bullet.trail.geometry) bullet.trail.geometry.dispose();
-      if (bullet.trail.material) bullet.trail.material.dispose();
-    }
-
-    // 활성 총알 목록에서 제거
-    this.activeBullets.splice(index, 1);
-  },
-
-  /**
-   * 모든 총알 제거
-   */
-  clearAllBullets() {
-    // 모든 활성 총알 제거
-    for (let i = this.activeBullets.length - 1; i >= 0; i--) {
-      this.removeBullet(this.activeBullets[i], i);
-    }
-
-    // 배열 초기화 (안전을 위해)
-    this.activeBullets = [];
-  },
-
-  /**
-   * 오래된 효과 정리
-   */
-  cleanupEffects() {
-    const currentTime = Date.now();
-
-    // 총알 구멍 효과 정리
-    for (let i = this.effects.bulletHitMeshes.length - 1; i >= 0; i--) {
-      const hitEffect = this.effects.bulletHitMeshes[i];
-
-      // 수명이 다한 효과 제거
-      if (currentTime - hitEffect.creationTime > hitEffect.lifetime) {
-        if (hitEffect.mesh && Graphics && Graphics.scene) {
-          Graphics.scene.remove(hitEffect.mesh);
-          if (hitEffect.mesh.geometry) hitEffect.mesh.geometry.dispose();
-          if (hitEffect.mesh.material) hitEffect.mesh.material.dispose();
-        }
-
-        this.effects.bulletHitMeshes.splice(i, 1);
-      }
-    }
-
-    // 최대 효과 개수 제한 (성능을 위해)
-    const maxHitEffects = 30;
-    if (this.effects.bulletHitMeshes.length > maxHitEffects) {
-      // 가장 오래된 효과부터 제거
-      const effectsToRemove = this.effects.bulletHitMeshes.length - maxHitEffects;
-
-      // 오래된 순으로 정렬
-      this.effects.bulletHitMeshes.sort((a, b) => a.creationTime - b.creationTime);
-
-      // 첫 N개 (가장 오래된 효과들) 제거
-      for (let i = 0; i < effectsToRemove; i++) {
-        const hitEffect = this.effects.bulletHitMeshes[i];
-
-        if (hitEffect.mesh && Graphics && Graphics.scene) {
-          Graphics.scene.remove(hitEffect.mesh);
-          if (hitEffect.mesh.geometry) hitEffect.mesh.geometry.dispose();
-          if (hitEffect.mesh.material) hitEffect.mesh.material.dispose();
-        }
-      }
-
-      // 배열에서 제거된 효과 제거
-      this.effects.bulletHitMeshes.splice(0, effectsToRemove);
-    }
-  },
-
-  /**
-   * 총알 충돌 감지
-   * @param {THREE.Raycaster} raycaster - 레이캐스터
-   * @param {Object} bullet - 총알 객체
-   * @returns {Object|null} 충돌 정보 또는 null
-   */
-  detectCollision(raycaster, bullet) {
-    const allIntersects = [];
-    
-    // 1. 장애물과의 충돌 검사
-    if (Environment && Environment.obstacles) {
-      const obstacles = Environment.obstacles.map(o => o.mesh);
-      const obstacleIntersects = raycaster.intersectObjects(obstacles);
-      
-      obstacleIntersects.forEach(intersection => {
-        const obstacleIndex = obstacles.indexOf(intersection.object);
-        allIntersects.push({
-          hitPoint: intersection.point,
-          hitNormal: intersection.face.normal,
-          distance: intersection.distance,
-          obstacle: Environment.obstacles[obstacleIndex],
-          surfaceType: Environment.obstacles[obstacleIndex].type || 'obstacle'
-        });
-      });
-    }
-
-    // 2. 벽과의 충돌 검사
-    const wallObjects = [];
-
-    // Graphics.scene에서 벽 메시 찾기
-    if (Graphics && Graphics.scene) {
-      Graphics.scene.traverse(object => {
-        // 벽 메시 식별 로직 (이름, 위치 등으로 구분)
-        if (object.isMesh && (
-            (object.position.x === 50 || object.position.x === -50) || // 동/서 벽
-            (object.position.z === 50 || object.position.z === -50)    // 남/북 벽
-        )) {
-          wallObjects.push(object);
-        }
-      });
-    }
-
-    const wallIntersects = raycaster.intersectObjects(wallObjects);
-    
-    wallIntersects.forEach(intersection => {
-      allIntersects.push({
-        hitPoint: intersection.point,
-        hitNormal: intersection.face.normal,
-        distance: intersection.distance,
-        obstacle: null,
-        surfaceType: 'wall'
-      });
-    });
-
-    // 3. 바닥과의 충돌 검사
-    const floorObjects = [];
-
-    // Graphics.scene에서 바닥 메시 찾기
-    if (Graphics && Graphics.scene) {
-      Graphics.scene.traverse(object => {
-        // 바닥 메시 식별 로직
-        if (object.isMesh && object.rotation.x === -Math.PI / 2) { // 바닥은 X축으로 -90도 회전
-          floorObjects.push(object);
-        }
-      });
-    }
-
-    const floorIntersects = raycaster.intersectObjects(floorObjects);
-    
-    floorIntersects.forEach(intersection => {
-      allIntersects.push({
-        hitPoint: intersection.point,
-        hitNormal: intersection.face.normal,
-        distance: intersection.distance,
-        obstacle: null,
-        surfaceType: 'floor'
-      });
-    });
-    
-    // 4. 타겟 매니저로부터 타겟을 가져와 충돌 검사
-    // 주의: 타겟과 충돌은 마지막에 검사하여 장애물에 가려진 타겟을 맞히지 않도록 함
-    if (typeof TargetManager !== 'undefined' && TargetManager.targets) {
-      const targetMeshes = TargetManager.targets.map(t => t.mesh);
-      const targetIntersects = raycaster.intersectObjects(targetMeshes);
-      
-      targetIntersects.forEach(intersection => {
-        allIntersects.push({
-          hitPoint: intersection.point,
-          hitNormal: intersection.face.normal,
-          distance: intersection.distance,
-          target: true, // 타겟 충돌 표시
-          surfaceType: 'target'
-        });
-      });
-    }
-
-    // 모든 충돌을 거리에 따라 정렬하고 가장 가까운 것을 반환
-    if (allIntersects.length > 0) {
-      // 거리순으로 정렬
-      allIntersects.sort((a, b) => a.distance - b.distance);
-      return allIntersects[0]; // 가장 가까운 충돌 반환
-    }
-
-    // 충돌 없음
-    return null;
-  },
-
-  /**
-   * 총알 업데이트 (물리 시뮬레이션)
-   * @param {number} delta - 시간 간격 (초)
-   */
-  update(delta) {
-    if (!this.settings.enabled) return;
-
-    // 총알 업데이트
-    for (let i = this.activeBullets.length - 1; i >= 0; i--) {
-      const bullet = this.activeBullets[i];
-
-      // 이전 위치 저장 (충돌 감지 및 궤적용)
-      bullet.lastPosition.copy(bullet.position);
-
-      // 중력 영향 적용
-      bullet.velocity.y -= this.settings.gravity * delta;
-
-      // 총알 이동
-      const movement = bullet.velocity.clone().multiplyScalar(delta);
-      bullet.position.add(movement);
-
-      // 충돌 감지를 위한 레이캐스트 설정
-      const rayDirection = movement.clone().normalize();
-      const rayLength = movement.length();
-
-      const raycaster = new THREE.Raycaster(bullet.lastPosition, rayDirection, 0, rayLength);
-
-      // 충돌 감지
-      const collision = this.detectCollision(raycaster, bullet);
-
-      // 충돌이 발생한 경우
-      if (collision) {
-        const { hitPoint, hitNormal, obstacle, surfaceType, target } = collision;
-
-        // 타겟과 충돌한 경우는 처리하지 않음 (레이캐스트 식별 문제)
-        // 타겟 맞춤은 Game.js의 기존 로직으로 처리
-        if (target) {
-          continue;
-        }
-
-        // 충돌 효과 생성
-        this.createHitEffect(hitPoint, hitNormal, surfaceType);
-
-        // 장애물에 피해를 줄 수 있는 경우
-        if (obstacle && bullet.destructionPower > 0) {
-          // 돌 장애물은 파괴되지 않고 튕기지도 않음
-          const isStone = obstacle.type === 'stone' || obstacle.material === 'stone';
-          
-          if (!isStone) {
-            this.createObstacleDestructionEffect(
-              obstacle, 
-              hitPoint,
-              bullet.destructionPower * bullet.energy
-            );
-          }
-          
-          // 돌 장애물이면 튕김 없이 바로 총알 제거
-          if (isStone) {
-            this.removeBullet(bullet, i);
-            continue;
-          }
-        }
-
-        // 보유 에너지에 따라 튕김 처리
-        if (bullet.energy > 0.2 && bullet.bounceCount < bullet.maxBounces) {
-          // 튕김 방향 계산 (반사 벡터)
-          const reflection = this.calculateReflection(bullet.velocity, hitNormal);
-
-          // 속도 업데이트 (에너지 감소 반영)
-          bullet.energy *= (1 - this.settings.bounceEnergyLoss);
-          bullet.velocity.copy(reflection).multiplyScalar(bullet.velocity.length() * bullet.energy);
-
-          // 충돌 지점에서 살짝 떨어진 위치로 이동 (겹침 방지)
-          bullet.position.copy(hitPoint).add(hitNormal.clone().multiplyScalar(0.1));
-
-          // 튕김 카운트 증가
-          bullet.bounceCount++;
-
-          // 튕김 효과음 재생
-          if (typeof AudioManager !== 'undefined') {
-            AudioManager.play('bulletBounce', {
-              position: hitPoint,
-              energy: bullet.energy,
-              surfaceType: surfaceType // 표면 유형에 따른 소리 변화
-            });
-          }
-        } else {
-          // 충분한 에너지가 없거나 최대 튕김 횟수 도달: 총알 제거
-          this.removeBullet(bullet, i);
-          continue;
-        }
-      }
-
-      // 메시 위치 업데이트
-      if (bullet.mesh) {
-        bullet.mesh.position.copy(bullet.position);
-
-        // 진행 방향으로 회전 
-        if (bullet.velocity.lengthSq() > 0.001) {
-          const bulletDirection = bullet.velocity.clone().normalize();
-          bullet.mesh.lookAt(bullet.position.clone().add(bulletDirection));
-        }
-      }
-
-      // 궤적 업데이트
-      if (bullet.trail) {
-        this.updateBulletTrail(bullet);
-      }
-
-      // 총알 제거 조건 확인
-
-      // 1. 최대 거리 도달 여부
-      const distanceTraveled = bullet.position.distanceTo(bullet.initialPosition);
-      if (distanceTraveled > this.settings.maxDistance) {
-        this.removeBullet(bullet, i);
-        continue;
-      }
-
-      // 2. 수명 초과 여부 (5초)
-      if (Date.now() - bullet.creationTime > 5000) {
-        this.removeBullet(bullet, i);
-        continue;
-      }
-
-      // 3. 장면 밖으로 나간 경우
-      if (
-        bullet.position.y < -10 ||
-        Math.abs(bullet.position.x) > 100 ||
-        Math.abs(bullet.position.z) > 100
-      ) {
-        this.removeBullet(bullet, i);
-        continue;
-      }
-    }
-
-    // 오래된 효과 정리
-    this.cleanupEffects();
-  },
-
-  /**
-   * 게임에 총알 물리 시스템 통합
-   * @returns {boolean} 통합 성공 여부
-   */
-  integrateWithGame() {
-    if (typeof Game === 'undefined') return false;
-
-    // 원래 슈팅 함수 저장
-    const originalShootFunction = Game.shoot;
-
-    // 새로운 발사 함수로 대체
-    Game.shoot = function() {
-      // 탄약이 없는 경우 총알 발사하지 않음
-      if (Game.ammo <= 0) {
-        if (typeof AudioManager !== 'undefined') {
-          AudioManager.play('emptyGun');
-        }
-        return false;
-      }
-      
-      // 탄약 감소
-      Game.ammo--;
-      document.getElementById('ammo').textContent = Game.ammo;
-      
-      // 시각적 효과 (총구 화염 등)
-      Graphics.createGunFlash();
-
-      // 레이캐스트 설정
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(new THREE.Vector2(), Graphics.camera);
-      
-      // 먼저 장애물과의 충돌 확인 (타겟 감지 전에)
-      const obstacles = [];
-      
-      // 모든 장애물 메시 수집
-      if (Environment && Environment.obstacles) {
-        obstacles.push(...Environment.obstacles.map(o => o.mesh));
-      }
-      
-      // 벽 메시 찾기
-      if (Graphics && Graphics.scene) {
-        Graphics.scene.traverse(object => {
-          // 벽 메시 식별 로직
-          if (object.isMesh && (
-              (object.position.x === 50 || object.position.x === -50) || // 동/서 벽
-              (object.position.z === 50 || object.position.z === -50)    // 남/북 벽
-          )) {
-            obstacles.push(object);
-          }
-        });
-      }
-      
-      // 장애물과의 충돌 확인
-      const obstacleIntersects = raycaster.intersectObjects(obstacles);
-      let obstacleDistance = Infinity;
-      
-      if (obstacleIntersects.length > 0) {
-        obstacleDistance = obstacleIntersects[0].distance;
-      }
-      
-      // 타겟 감지 및 처리 (장애물 충돌 거리를 고려)
-      let hit = false;
-      
-      // GitHub 타겟 확인 (특수 타겟)
-      if (typeof GitHubTarget !== 'undefined') {
-        hit = GitHubTarget.checkHit(raycaster);
-      }
-      
-      // 일반 타겟 확인 (장애물에 가려진 경우는 제외)
-      if (!hit && typeof TargetManager !== 'undefined') {
-        // TargetManager.checkHit 함수를 직접 수정하는 대신, 
-        // 여기서 먼저 타겟과의 거리를 확인하고 장애물보다 먼 경우 무시
-        
-        // 타겟 메시 수집
-        const targetMeshes = TargetManager.targets.map(t => t.mesh);
-        const targetIntersects = raycaster.intersectObjects(targetMeshes);
-        
-        if (targetIntersects.length > 0) {
-          // 가장 가까운 타겟까지의 거리
-          const targetDistance = targetIntersects[0].distance;
-          
-          // 타겟이 장애물보다 가까우면 히트 처리
-          if (targetDistance < obstacleDistance) {
-            hit = TargetManager.checkHit(raycaster);
-          } else {
-            // 장애물에 가려진 타겟은 히트 처리하지 않음
-            console.log("장애물에 막힌 타겟");
-          }
-        }
-      }
-      
-      // 총알 물리 시스템 활성화된 경우 추가 처리
-      if (BulletPhysics.settings.enabled) {
-        // 카메라 정보 가져오기
-        const camera = Graphics.camera;
-        
-        // 카메라 위치 및 방향
-        const origin = camera.position.clone();
-        const direction = new THREE.Vector3(0, 0, -1);
-        direction.applyQuaternion(camera.quaternion);
-        
-        // 이벤트 발생
-        if (typeof EventSystem !== 'undefined') {
-          EventSystem.emit('bulletFired', {
-            origin: origin,
-            direction: direction,
-            weapon: 'standard'
-          });
-        } else {
-          // 이벤트 시스템이 없는 경우 직접 호출
-          BulletPhysics.createBullet(origin, direction, 'standard');
-        }
-      }
-
-      return hit;
-    };
-
-    // 애니메이션 루프에 총알 물리 업데이트 통합
-    const originalAnimateFunction = Game.animate;
-
-    Game.animate = function() {
-      // 원래 애니메이션 로직 실행
-      originalAnimateFunction.apply(Game, arguments);
-
-      // 총알 물리 시스템 업데이트
-      if (BulletPhysics.settings.enabled && Game.gameStarted) {
-        // Graphics.clock.getDelta()는 이미 Game.animate에서 호출되었을 수 있으므로,
-        // 별도의 delta 값을 계산
-        const delta = Math.min(0.016, 1 / 60); // 최대 16ms (60fps) 제한
-        BulletPhysics.update(delta);
-      }
-    };
-
-    console.log('총알 물리 시스템이 Game 모듈과 통합되었습니다.');
-    return true;
-  }
 };
+
+
+/**
+ * Represents a single simulated bullet. Reused via object pooling.
+ */
+class PooledBullet {
+    constructor() {
+        this.active = false;
+        this.position = new THREE.Vector3();
+        this.velocity = new THREE.Vector3();
+        this.initialPosition = new THREE.Vector3();
+        this.initialVelocityMagnitude = 0;
+        this.traveledDistance = 0;
+        this.creationTime = 0;
+        this.lastPosition = new THREE.Vector3();
+        this.mass = 0.01;
+        this.dragCoefficient = 0.47;
+        this.gravityFactor = 1.0;
+        this.energy = 1.0;
+        this.penetrationPower = 1.0;
+        this.weaponType = 'standard';
+        this.maxBounces = 0;
+        this.bounceEnergyLossFactor = 0.4;
+        this.maxDistance = 1000;
+        this.destructionPower = 0.3;
+        this.bulletCaliber = 7.62;
+        this.bounceCount = 0;
+        this.mesh = null;
+        this.trail = null;
+        this.trailVertices = [];
+        this.isTracer = false;
+        this._poolId = -1; // Internal ID for tracking within the pool
+    }
+
+    reset() {
+        this.active = false;
+        this.position.set(0, 0, 0);
+        this.velocity.set(0, 0, 0);
+        this.initialPosition.set(0, 0, 0);
+        this.initialVelocityMagnitude = 0;
+        this.traveledDistance = 0;
+        this.creationTime = 0;
+        this.lastPosition.set(0, 0, 0);
+        this.mass = 0.01;
+        this.dragCoefficient = 0.47;
+        this.gravityFactor = 1.0;
+        this.energy = 1.0;
+        this.penetrationPower = 1.0;
+        this.weaponType = 'standard';
+        this.maxBounces = 0;
+        this.bounceEnergyLossFactor = 0.4;
+        this.maxDistance = 1000;
+        this.destructionPower = 0.3;
+        this.bulletCaliber = 7.62;
+        this.bounceCount = 0;
+        // Visuals are reset/released by BulletPhysicsSystem
+        this.mesh = null;
+        this.trail = null;
+        this.trailVertices = [];
+        this.isTracer = false;
+        // Keep _poolId
+        return this;
+    }
+
+    activate(id, origin, direction, weaponConfig) {
+        this.reset();
+        this._poolId = id;
+        this.active = true;
+
+        this.position.copy(origin);
+        this.initialPosition.copy(origin);
+        this.lastPosition.copy(origin);
+
+        this.weaponType = weaponConfig.id || 'standard';
+        this.initialVelocityMagnitude = weaponConfig.speed;
+        this.velocity.copy(direction).normalize().multiplyScalar(this.initialVelocityMagnitude);
+
+        this.maxBounces = weaponConfig.maxBounces;
+        this.bounceEnergyLossFactor = weaponConfig.bounceEnergyLoss;
+        this.maxDistance = weaponConfig.maxDistance;
+        this.destructionPower = weaponConfig.destructionPower;
+        this.penetrationPower = weaponConfig.penetrationPower;
+        this.bulletCaliber = weaponConfig.caliber;
+        this.mass = weaponConfig.mass;
+        this.dragCoefficient = weaponConfig.dragCoefficient;
+        this.gravityFactor = weaponConfig.gravityFactor ?? 1.0;
+        this.isTracer = weaponConfig.isTracer ?? false;
+
+        this.creationTime = performance.now();
+        this.energy = 1.0;
+        this.bounceCount = 0;
+        this.traveledDistance = 0;
+
+        return this;
+    }
+}
+
+const BulletPhysicsSystem = {
+    // --- Configuration ---
+    settings: {
+        enabled: true,
+        gravity: new THREE.Vector3(0, -9.81, 0),
+        maxSimultaneousBullets: 200,
+        bulletPoolSize: 250,
+        meshPoolSize: 250,
+        trailPoolSize: 100,
+        decalPoolSize: 150,
+        renderTrails: true,
+        trailMaxPoints: 30,
+        trailMinVertexDistance: 0.1,
+        trailFadeDuration: 1500,
+        renderHitDecals: true,
+        decalLifetime: 15000,
+        decalSize: 0.1,
+        obstacleDestructionThreshold: 1.0,
+        obstacleImpactImpulseScale: 0.05,
+        partialDestructionEnabled: true,
+        debugMode: false,
+    },
+
+    // --- State ---
+    activeBullets: [],
+    damagedObstacles: new Map(), // Key: obstacle UUID, Value: { totalDamage, mesh, segments? }
+
+    // --- Dependencies (Injected via init) ---
+    dependencies: {
+        scene: null,
+        physicsWorld: null, // Interface: { removeBody(body), applyImpulse(body, impulseVec3, worldPosVec3) }
+        audioManager: null,   // Interface: { play(soundName, { position?, volume?, surface? }) }
+        particleSystem: null,// Interface: { createImpactParticles(config), createExplosion(config) }
+        eventSystem: null,    // Interface: { on(eventName, handler), emit(eventName, data) }
+        environmentProvider: null, // Interface: () => Array<THREE.Mesh>
+        targetProvider: null,      // Interface: () => Array<THREE.Mesh>
+        materialManager: MaterialManager, // Use the placeholder or provide a real one
+    },
+
+    // --- Object Pools ---
+    _bulletPool: [],
+    _meshPool: [],
+    _trailPool: [],
+    _decalPool: [],
+    _availableBulletIds: new Set(),
+
+    // --- Weapon Definitions (Load externally in production) ---
+    weaponTypes: {
+        standard: {
+            id: 'standard', speed: 400, maxBounces: 1, bounceEnergyLoss: 0.5, maxDistance: 1000,
+            destructionPower: 0.3, penetrationPower: 5.0, caliber: 7.62, mass: 0.01,
+            dragCoefficient: 0.45, gravityFactor: 1.0, meshSize: 0.02, color: 0xffcc00,
+            isTracer: false, fireSound: 'shoot_standard',
+        },
+        sniper: {
+            id: 'sniper', speed: 900, maxBounces: 0, bounceEnergyLoss: 0.9, maxDistance: 2500,
+            destructionPower: 0.6, penetrationPower: 15.0, caliber: 7.62, mass: 0.012,
+            dragCoefficient: 0.3, gravityFactor: 1.0, meshSize: 0.025, color: 0xffffff,
+            isTracer: true, fireSound: 'shoot_sniper',
+        },
+        pistol: {
+            id: 'pistol', speed: 350, maxBounces: 2, bounceEnergyLoss: 0.4, maxDistance: 300,
+            destructionPower: 0.15, penetrationPower: 3.0, caliber: 9.0, mass: 0.008,
+            dragCoefficient: 0.5, gravityFactor: 1.0, meshSize: 0.015, color: 0x999999,
+            isTracer: false, fireSound: 'shoot_pistol',
+        },
+        shotgun_pellet: {
+            id: 'shotgun_pellet', speed: 380, maxBounces: 0, bounceEnergyLoss: 0.8, maxDistance: 50,
+            destructionPower: 0.1, penetrationPower: 1.0, caliber: 8.4, mass: 0.003,
+            dragCoefficient: 0.6, gravityFactor: 1.0, meshSize: 0.01, color: 0xaaaaaa,
+            isTracer: false, fireSound: null, spreadAngle: 5.0
+        },
+        bouncy: {
+            id: 'bouncy', speed: 300, maxBounces: 5, bounceEnergyLoss: 0.1, maxDistance: 500,
+            destructionPower: 0.1, penetrationPower: 2.0, caliber: 10.0, mass: 0.015,
+            dragCoefficient: 0.5, gravityFactor: 1.0, meshSize: 0.03, color: 0x00ccff,
+            isTracer: true, fireSound: 'shoot_bouncy',
+        }
+    },
+
+    /**
+     * Initializes the Bullet Physics System.
+     * @param {object} dependencies - Required external modules and functions.
+     * @param {THREE.Scene} dependencies.scene - The main THREE.js scene.
+     * @param {object} dependencies.materialManager - An object conforming to the MaterialManager interface.
+     * @param {function} dependencies.environmentProvider - Function returning collidable environment meshes.
+     * @param {function} dependencies.targetProvider - Function returning collidable target meshes.
+     * @param {object} [dependencies.physicsWorld] - Optional physics engine world instance.
+     * @param {object} [dependencies.audioManager] - Optional audio playback manager.
+     * @param {object} [dependencies.particleSystem] - Optional particle effect system.
+     * @param {object} [dependencies.eventSystem] - Optional event bus.
+     */
+    init(dependencies) {
+        console.log("Initializing Advanced Bullet Physics System...");
+
+        if (!dependencies || !dependencies.scene || !dependencies.materialManager || !dependencies.environmentProvider || !dependencies.targetProvider) {
+            console.error("BulletPhysicsSystem: Missing critical dependencies (scene, materialManager, environmentProvider, targetProvider)! Disabling system.");
+            this.settings.enabled = false;
+            return;
+        }
+
+        // Store provided dependencies
+        this.dependencies = { ...this.dependencies, ...dependencies };
+
+        // Validate dependency interfaces (basic check)
+        if (this.dependencies.audioManager && typeof this.dependencies.audioManager.play !== 'function') {
+             console.warn("BulletPhysicsSystem: Provided audioManager lacks a 'play' method.");
+        }
+         if (this.dependencies.particleSystem && (typeof this.dependencies.particleSystem.createImpactParticles !== 'function' || typeof this.dependencies.particleSystem.createExplosion !== 'function')) {
+             console.warn("BulletPhysicsSystem: Provided particleSystem lacks required methods ('createImpactParticles', 'createExplosion').");
+         }
+        if (this.dependencies.physicsWorld && (typeof this.dependencies.physicsWorld.removeBody !== 'function' || typeof this.dependencies.physicsWorld.applyImpulse !== 'function')) {
+             console.warn("BulletPhysicsSystem: Provided physicsWorld lacks required methods ('removeBody', 'applyImpulse').");
+         }
+        if (this.dependencies.eventSystem && (typeof this.dependencies.eventSystem.on !== 'function' || typeof this.dependencies.eventSystem.emit !== 'function')) {
+             console.warn("BulletPhysicsSystem: Provided eventSystem lacks required methods ('on', 'emit').");
+         }
+
+
+        // Initialize Object Pools
+        this._initializePools();
+
+        this.activeBullets = [];
+        this.damagedObstacles.clear();
+
+        // Register event listeners if EventSystem is available
+        if (this.dependencies.eventSystem) {
+            this.dependencies.eventSystem.on('bulletFired', this.handleBulletFired.bind(this));
+            // Listen for shotgun specific event if needed, or handle in handleBulletFired
+            this.dependencies.eventSystem.on('fireShotgun', this.handleFireShotgun.bind(this));
+            this.dependencies.eventSystem.on('gameStateChanged', this.handleGameStateChange.bind(this));
+            this.dependencies.eventSystem.on('obstacleRemoved', this.handleObstacleRemoved.bind(this));
+        } else {
+            console.warn("BulletPhysicsSystem: EventSystem not provided. Manual bullet creation required via fireBullet() or fireShotgunBlast().");
+        }
+
+        this.settings.enabled = true;
+        console.log(`Advanced Bullet Physics System Initialized. Pools: Bullets(${this._bulletPool.length}), Meshes(${this._meshPool.length}), Trails(${this._trailPool.length}), Decals(${this._decalPool.length})`);
+    },
+
+    _initializePools() {
+        // Bullet Objects
+        this._bulletPool = [];
+        this._availableBulletIds.clear();
+        for (let i = 0; i < this.settings.bulletPoolSize; i++) {
+            const bullet = new PooledBullet();
+            bullet._poolId = i; // Assign persistent pool ID
+            this._bulletPool.push(bullet);
+            this._availableBulletIds.add(i);
+        }
+
+        // Bullet Meshes
+        this._meshPool = this._createMeshPool(this.settings.meshPoolSize,
+            () => new THREE.SphereGeometry(0.5, 8, 8), // Base radius 0.5, scaled later
+            () => new THREE.MeshStandardMaterial({
+                color: 0xffffff, emissive: 0x000000, roughness: 0.5, metalness: 0.8,
+                premultipliedAlpha: true // Good practice if using transparency later
+            }),
+            false // Not decals
+        );
+
+        // Trail Renderers
+        if (this.settings.renderTrails) {
+            this._trailPool = this._createLinePool(this.settings.trailPoolSize,
+                () => new THREE.LineBasicMaterial({
+                    color: 0xffffff, vertexColors: true, transparent: true,
+                    opacity: 0.8, depthWrite: false, // Don't occlude things behind trail
+                    blending: THREE.AdditiveBlending // Brighter trails
+                }),
+                this.settings.trailMaxPoints
+            );
+        } else {
+            this._trailPool = [];
+        }
+
+        // Hit Decals
+        if (this.settings.renderHitDecals) {
+            this._decalPool = this._createMeshPool(this.settings.decalPoolSize,
+                () => new THREE.PlaneGeometry(1, 1), // Base size 1x1, scaled later
+                () => new THREE.MeshStandardMaterial({
+                    color: 0x333333, transparent: true, opacity: 0.9,
+                    depthWrite: false, // Avoid interfering with depth buffer
+                    polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, // Prevent z-fighting
+                    map: null // Placeholder for decal texture
+                }),
+                true // Mark as decal pool
+            );
+             // TODO: Pre-load common decal textures here if possible
+        } else {
+            this._decalPool = [];
+        }
+    },
+
+    _createMeshPool(size, createGeometry, createMaterial, isDecalPool) {
+        const pool = [];
+        for (let i = 0; i < size; i++) {
+            const geometry = createGeometry();
+            const material = createMaterial();
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.visible = false;
+            mesh.userData = { pooled: true, active: false, poolIndex: i, creationTime: 0, lifetime: Infinity, isDecal: isDecalPool };
+            if (!isDecalPool) mesh.castShadow = true;
+            this.dependencies.scene.add(mesh); // Add to scene once, manage visibility
+            pool.push(mesh);
+        }
+        return pool;
+    },
+
+    _createLinePool(size, createMaterial, maxPoints) {
+        const pool = [];
+        for (let i = 0; i < size; i++) {
+            const material = createMaterial();
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(maxPoints * 3);
+            const colors = new Float32Array(maxPoints * 3);
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage)); // Mark as dynamic
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage));
+            geometry.setDrawRange(0, 0);
+
+            const line = new THREE.Line(geometry, material);
+            line.frustumCulled = false;
+            line.visible = false;
+            line.userData = { pooled: true, active: false, poolIndex: i, vertexCount: 0, lastVertexTime: 0 };
+            this.dependencies.scene.add(line);
+            pool.push(line);
+        }
+        return pool;
+    },
+
+    _acquireBulletObject() {
+        if (this._availableBulletIds.size === 0) {
+            if (this.settings.debugMode) console.warn("Bullet pool depleted!");
+            return null;
+        }
+        const id = this._availableBulletIds.values().next().value;
+        this._availableBulletIds.delete(id);
+        return this._bulletPool[id];
+    },
+
+    _releaseBulletObject(bullet) {
+        if (bullet && bullet._poolId !== -1 && this._bulletPool[bullet._poolId] === bullet) { // Ensure it's the correct object
+             if (!this._availableBulletIds.has(bullet._poolId)){ // Avoid double-release
+                 this._availableBulletIds.add(bullet._poolId);
+                 bullet.reset(); // Reset state AFTER confirming it's back in the pool
+             }
+        } else {
+            if (this.settings.debugMode) console.warn("Attempted to release invalid or already released bullet object:", bullet);
+        }
+    },
+
+    _acquirePooledVisual(pool) {
+        for (const visual of pool) {
+            if (visual.userData.pooled && !visual.userData.active) {
+                visual.userData.active = true;
+                visual.visible = true; // Make visible on acquire
+                return visual;
+            }
+        }
+        if (this.settings.debugMode) {
+            let poolName = 'Unknown';
+            if (pool === this._meshPool) poolName = 'Mesh';
+            else if (pool === this._trailPool) poolName = 'Trail';
+            else if (pool === this._decalPool) poolName = 'Decal';
+            console.warn(`${poolName} pool depleted!`);
+        }
+        return null;
+    },
+
+    _releasePooledVisual(visual) {
+        if (visual && visual.userData.pooled && visual.userData.active) {
+            visual.userData.active = false;
+            visual.visible = false; // Make invisible on release
+            visual.userData.creationTime = 0; // Reset timer/lifetime info
+            visual.userData.lifetime = Infinity;
+
+            if (visual.isLine) { // Reset Trail specific properties
+                visual.geometry.setDrawRange(0, 0);
+                 // Clear buffer data if necessary, though reusing is often faster
+                 // const positions = visual.geometry.attributes.position.array;
+                 // positions.fill(0); // Optional: zero out data
+                 // visual.geometry.attributes.position.needsUpdate = true;
+                visual.userData.vertexCount = 0;
+            }
+            if (visual.userData.isDecal) { // Reset Decal specific properties
+                if (visual.parent !== this.dependencies.scene) {
+                    // If attached to another object, re-attach to scene root for pooling
+                    this.dependencies.scene.attach(visual);
+                }
+                visual.scale.set(1, 1, 1); // Reset scale
+                visual.rotation.set(0, 0, 0); // Reset rotation
+                visual.material.opacity = 0.9; // Reset opacity
+                visual.material.map = null; // Clear texture reference
+                 visual.material.needsUpdate = true;
+            }
+        }
+    },
+
+    _activateVisuals(bullet, weaponConfig) {
+        // Mesh
+        bullet.mesh = this._acquirePooledVisual(this._meshPool);
+        if (bullet.mesh) {
+            bullet.mesh.position.copy(bullet.position);
+            bullet.mesh.scale.setScalar(weaponConfig.meshSize); // Geometry radius is 0.5, so scale is size
+            bullet.mesh.material.color.setHex(weaponConfig.color);
+            bullet.mesh.material.emissive.setHex(bullet.isTracer ? weaponConfig.color : 0x000000);
+            bullet.mesh.material.emissiveIntensity = bullet.isTracer ? 1.5 : 0.0;
+            bullet.mesh.material.needsUpdate = true;
+            if (bullet.velocity.lengthSq() > 0.001) {
+                bullet.mesh.lookAt(bullet.position.clone().add(bullet.velocity));
+            }
+        }
+
+        // Trail
+        if (this.settings.renderTrails && bullet.isTracer) { // Only tracers get trails
+            bullet.trail = this._acquirePooledVisual(this._trailPool);
+            if (bullet.trail) {
+                bullet.trailVertices = []; // Clear old data
+                bullet.trail.userData.vertexCount = 0;
+                bullet.trail.userData.lastVertexTime = bullet.creationTime;
+                const positions = bullet.trail.geometry.attributes.position.array;
+                const colors = bullet.trail.geometry.attributes.color.array;
+
+                // Add initial point
+                positions[0] = bullet.position.x; positions[1] = bullet.position.y; positions[2] = bullet.position.z;
+                const trailColor = new THREE.Color(weaponConfig.color);
+                colors[0] = trailColor.r; colors[1] = trailColor.g; colors[2] = trailColor.b;
+
+                bullet.trailVertices.push({ pos: bullet.position.clone(), time: bullet.creationTime });
+                bullet.trail.userData.vertexCount = 1;
+                bullet.trail.geometry.setDrawRange(0, 1);
+                bullet.trail.geometry.attributes.position.needsUpdate = true;
+                bullet.trail.geometry.attributes.color.needsUpdate = true;
+            }
+        } else {
+            bullet.trail = null;
+            bullet.trailVertices = [];
+        }
+    },
+
+    _deactivateVisuals(bullet) {
+        if (bullet.mesh) {
+            this._releasePooledVisual(bullet.mesh);
+            bullet.mesh = null;
+        }
+        if (bullet.trail) {
+            this._releasePooledVisual(bullet.trail);
+            bullet.trail = null;
+            bullet.trailVertices = []; // Clear vertex data associated with bullet
+        }
+    },
+
+    // --- Event Handlers ---
+
+    handleBulletFired(data) {
+        if (!this.settings.enabled) return;
+
+        const { origin, direction, weaponType = 'standard', count = 1, spreadAngle = 0 } = data;
+        if (!origin || !direction) {
+             console.error("BulletPhysicsSystem: 'bulletFired' event missing origin or direction.");
+             return;
+        }
+
+        const weaponConfig = this.weaponTypes[weaponType] || this.weaponTypes.standard;
+        if (!weaponConfig){
+             console.warn(`BulletPhysicsSystem: Unknown weaponType "${weaponType}". Using "standard".`);
+             weaponConfig = this.weaponTypes.standard;
+        }
+
+        const baseDirection = direction.clone().normalize();
+
+        for (let i = 0; i < count; i++) {
+            let fireDirection = baseDirection.clone();
+            if (spreadAngle > 0 && count > 1) {
+                 fireDirection = this._calculateSpreadDirection(baseDirection, spreadAngle);
+            }
+            this.createBullet(origin, fireDirection, weaponType); // Pass weaponType string
+        }
+
+        // Play fire sound once, even for bursts/shotguns handled here
+        if (this.dependencies.audioManager && weaponConfig.fireSound && count > 0) {
+            this.dependencies.audioManager.play(weaponConfig.fireSound, { position: origin, volume: 0.8 });
+        }
+    },
+
+     // Specific handler for shotgun event if needed for different logic
+     handleFireShotgun(data) {
+        if (!this.settings.enabled) return;
+        const { origin, direction, weaponType = 'shotgun_pellet', count = 8 } = data;
+         if (!origin || !direction) {
+             console.error("BulletPhysicsSystem: 'fireShotgun' event missing origin or direction.");
+             return;
+         }
+
+        const weaponConfig = this.weaponTypes[weaponType];
+        if (!weaponConfig){
+             console.warn(`BulletPhysicsSystem: Unknown shotgun pellet type "${weaponType}".`);
+             return; // Don't fire if config is missing
+        }
+        const spread = weaponConfig.spreadAngle || 5.0;
+
+        const fireData = {
+             origin: origin,
+             direction: direction,
+             weaponType: weaponType,
+             count: count,
+             spreadAngle: spread
+         };
+         // Reuse the main handler for the actual firing logic
+         this.handleBulletFired(fireData);
+
+         // Play shotgun sound (assuming it's different from pellet hit/fire sound)
+          if (this.dependencies.audioManager) {
+            this.dependencies.audioManager.play('shoot_shotgun', { position: origin, volume: 1.0 });
+        }
+     },
+
+    handleGameStateChange(data) {
+        if (!data || !data.state) return;
+        if (data.state === 'gameOver' || data.state === 'menu' || data.state === 'levelEnd') {
+            if (this.settings.debugMode) console.log(`GameState Changed to ${data.state}, clearing bullets and effects.`);
+            this.clearAllBullets();
+            this.clearAllDecals();
+            this.damagedObstacles.clear();
+        }
+    },
+
+    handleObstacleRemoved(data) {
+        if (data && data.obstacleUUID && this.damagedObstacles.has(data.obstacleUUID)) {
+            this.damagedObstacles.delete(data.obstacleUUID);
+            if (this.settings.debugMode) console.log(`Removed damage tracking for obstacle ${data.obstacleUUID}`);
+        }
+    },
+
+    _calculateSpreadDirection(baseDirection, spreadAngleDegrees) {
+         const spreadRad = THREE.MathUtils.degToRad(spreadAngleDegrees);
+         const randomAngle = Math.random() * Math.PI * 2;
+         // Cosine-weighted distribution for more central clustering (more realistic)
+         const randomSpread = Math.acos(1 - Math.random() * (1 - Math.cos(spreadRad)));
+         // Simple uniform spread: const randomSpread = Math.random() * spreadRad;
+
+         const spreadVector = new THREE.Vector3(
+             Math.cos(randomAngle) * Math.sin(randomSpread),
+             Math.sin(randomAngle) * Math.sin(randomSpread),
+             Math.cos(randomSpread) // Z is forward in local space
+         );
+
+         // Align spreadVector with baseDirection
+         const targetQuaternion = new THREE.Quaternion();
+         const up = (Math.abs(baseDirection.y) < 0.99) ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0); // Handle gimbal lock cases
+         const rotationMatrix = new THREE.Matrix4().lookAt(new THREE.Vector3(), baseDirection, up);
+         targetQuaternion.setFromRotationMatrix(rotationMatrix);
+
+         return spreadVector.applyQuaternion(targetQuaternion);
+    },
+
+
+    // --- Core Logic ---
+
+    /**
+     * Creates and launches a new bullet using pooled objects.
+     * Should generally be called via event handlers or fireBullet/fireShotgunBlast.
+     */
+    createBullet(origin, direction, weaponType = 'standard') {
+        if (!this.settings.enabled) return null;
+        if (this.activeBullets.length >= this.settings.maxSimultaneousBullets) {
+            if (this.settings.debugMode) console.warn(`Max simultaneous bullets (${this.settings.maxSimultaneousBullets}) reached. Bullet not created.`);
+            return null;
+        }
+
+        const weaponConfig = this.weaponTypes[weaponType] || this.weaponTypes.standard;
+        if (!weaponConfig){
+            console.warn(`BulletPhysicsSystem: Cannot create bullet, unknown weaponType "${weaponType}". Using "standard".`);
+            weaponConfig = this.weaponTypes.standard;
+        }
+
+
+        const bullet = this._acquireBulletObject();
+        if (!bullet) {
+             if (this.settings.debugMode) console.warn("Failed to acquire bullet object from pool.");
+            return null; // Pool empty
+        }
+
+        bullet.activate(bullet._poolId, origin, direction, weaponConfig);
+        this._activateVisuals(bullet, weaponConfig); // Get mesh/trail from pools
+
+        this.activeBullets.push(bullet);
+        // Don't play sound here, handled by fire event handlers
+
+        return bullet;
+    },
+
+    /** Updates all active bullets based on the time delta. Call this in your game loop. */
+    update(delta) {
+        if (!this.settings.enabled || delta <= 0) return;
+
+        // Clamp delta to prevent physics explosion with large time steps
+        const dt = Math.min(delta, 1 / 30); // Max step of 1/30th second
+
+        const gravityForce = this.settings.gravity.clone().multiplyScalar(dt);
+        const collidables = this._getCollidableObjects();
+        const bulletsToRemove = [];
+
+        for (let i = 0; i < this.activeBullets.length; i++) {
+            const bullet = this.activeBullets[i];
+            if (!bullet || !bullet.active) continue;
+
+            // --- Physics Simulation ---
+            bullet.lastPosition.copy(bullet.position);
+
+            // 1. Apply Gravity
+            bullet.velocity.addScaledVector(gravityForce, bullet.gravityFactor);
+
+            // 2. Apply Air Resistance (Drag)
+            const speedSq = bullet.velocity.lengthSq();
+            let currentMaterialDrag = 1.0; // Assume air drag initially
+            // TODO: Check if bullet is inside a volume (e.g., water) to apply different drag
+
+            if (speedSq > 0.001) {
+                const dragMagnitude = speedSq * bullet.dragCoefficient * 0.5 * currentMaterialDrag;
+                const dragForce = bullet.velocity.clone().normalize().multiplyScalar(-dragMagnitude * dt);
+                bullet.velocity.add(dragForce);
+                bullet.energy = bullet.velocity.length() / bullet.initialVelocityMagnitude; // Update energy based on speed
+            }
+
+            // 3. Calculate Movement Step
+            const movementStep = bullet.velocity.clone().multiplyScalar(dt);
+            const predictedPosition = bullet.position.clone().add(movementStep);
+            const stepDistance = movementStep.length();
+
+            // --- Collision Detection ---
+            let collisionResult = null;
+            if (stepDistance > 0.001 && collidables.length > 0) {
+                const ray = new THREE.Ray(bullet.lastPosition, movementStep.clone().normalize());
+                collisionResult = this._raycast(ray, stepDistance, collidables, bullet);
+            }
+
+            // --- Collision Response ---
+            if (collisionResult) {
+                const { point, normal, face, object, distance } = collisionResult;
+                const materialName = this.dependencies.materialManager.getMaterialNameFromObject(object);
+                const materialProps = this.dependencies.materialManager.getMaterialProperties(materialName);
+
+                bullet.position.copy(point);
+                bullet.traveledDistance += distance;
+
+                const impactVelocity = bullet.velocity.clone();
+                const impactAngle = Math.acos(Math.max(-1, Math.min(1, normal.dot(impactVelocity.clone().normalize()) * -1))); // Angle relative to normal (0 = perpendicular)
+                const impactEnergy = bullet.energy; // Energy just before impact
+
+                this._createHitEffect(point, normal, face, object, materialProps, impactVelocity, impactEnergy, bullet.bulletCaliber);
+                this._applyImpactImpulse(object, point, impactVelocity.clone().multiplyScalar(bullet.mass));
+
+                const isDestructible = object.userData?.isDestructible ?? false;
+                let destroyed = false;
+                if (isDestructible) {
+                    destroyed = this._handleObstacleDamage(object, point, normal, bullet.destructionPower * impactEnergy, materialProps);
+                }
+
+                // Basic Penetration Check (stop or continue)
+                const penetrationThreshold = materialProps.hardness * 20.0; // Arbitrary scaling factor
+                const effectivePenetration = bullet.penetrationPower * impactEnergy * Math.cos(impactAngle); // More power head-on
+
+                // Check if bullet should stop or continue (penetrate/ricochet)
+                 let shouldStop = true; // Assume stop unless penetration or ricochet occurs
+
+                if (!destroyed && effectivePenetration > penetrationThreshold && materialProps.penetrationMultiplier) {
+                     // Penetration occurs (simplified: pass through thin materials)
+                     // More realistic model needs object thickness, material layers etc.
+                     const energyLossOnPen = 0.6 + materialProps.hardness * 0.3; // Lose more energy through harder stuff
+                     bullet.energy *= (1.0 - energyLossOnPen);
+                     bullet.penetrationPower *= 0.5; // Reduce future penetration ability
+                     bullet.position.addScaledVector(bullet.velocity.clone().normalize(), 0.01); // Move slightly past surface
+                     bullet.lastPosition.copy(bullet.position); // Update last pos to avoid immediate re-collision
+                     shouldStop = false; // Bullet continues
+                     if (this.settings.debugMode) console.log("Bullet penetrated material:", materialName);
+
+                 } else if (!destroyed) {
+                    // No penetration, check Ricochet
+                    const minBounceEnergy = 0.05;
+                    const maxBounceAngleRad = THREE.MathUtils.degToRad(80); // Allow bounces up to 80 degrees from normal
+
+                    if (bullet.bounceCount < bullet.maxBounces && impactEnergy > minBounceEnergy && impactAngle > (Math.PI / 2 - maxBounceAngleRad)) { // Check angle relative to surface (glancing angles > ~10 deg)
+                         const reflection = this._calculateReflection(impactVelocity, normal);
+
+                         // Energy loss depends on angle (less loss at glancing) and hardness (more loss on hard)
+                         const angleFactor = Math.sin(impactAngle); // 1 at 90deg (glancing), 0 at 0deg (head-on)
+                         const energyLoss = bullet.bounceEnergyLossFactor * (1.0 - angleFactor * 0.7) + materialProps.hardness * 0.1; // Base loss + hardness factor
+                         const remainingEnergyFactor = Math.max(0, 1.0 - energyLoss);
+
+                         bullet.velocity.copy(reflection).multiplyScalar(remainingEnergyFactor);
+                         bullet.energy *= remainingEnergyFactor;
+
+                         bullet.position.addScaledVector(normal, 0.01); // Move slightly away
+                         bullet.lastPosition.copy(bullet.position); // Update last pos
+
+                         bullet.bounceCount++;
+                         shouldStop = false; // Bullet continues bouncing
+
+                         // Play bounce sound
+                         if (this.dependencies.audioManager) {
+                             this.dependencies.audioManager.play('bulletBounce', { position: point, volume: 0.4 * impactEnergy, surface: materialName });
+                         }
+                     }
+                }
+
+                 if (shouldStop || destroyed) { // Stop if no penetration/ricochet, or if obstacle was destroyed
+                     bulletsToRemove.push(bullet);
+                     continue; // Skip rest of update for this bullet
+                 }
+
+            } else {
+                // No collision
+                bullet.position.copy(predictedPosition);
+                bullet.traveledDistance += stepDistance;
+            }
+
+            // --- Update Visuals ---
+            if (bullet.mesh) {
+                bullet.mesh.position.copy(bullet.position);
+                if (bullet.velocity.lengthSq() > 0.01) {
+                    bullet.mesh.lookAt(bullet.position.clone().add(bullet.velocity));
+                }
+            }
+            if (bullet.trail) {
+                this._updateBulletTrail(bullet, dt);
+            }
+
+            // --- Check Removal Conditions ---
+            if (bullet.traveledDistance >= bullet.maxDistance ||
+                bullet.energy < 0.01 || // Effectively stopped
+                (performance.now() - bullet.creationTime) > 15000 || // Max lifetime 15s
+                !this._isInWorldBounds(bullet.position))
+            {
+                bulletsToRemove.push(bullet);
+            }
+        } // End bullet loop
+
+        // --- Remove Bullets marked for removal ---
+        for (const bullet of bulletsToRemove) {
+            const index = this.activeBullets.indexOf(bullet);
+            if (index !== -1) {
+                this._deactivateVisuals(bullet);
+                this._releaseBulletObject(bullet);
+                this.activeBullets.splice(index, 1);
+            }
+        }
+
+        // --- Update & Cleanup Effects ---
+        this._updateActiveDecals(dt);
+        // Trails are updated with bullets, but could have separate cleanup if needed
+    },
+
+    _getCollidableObjects() {
+        // In a large world, use spatial partitioning (octree, grid) or physics engine's broadphase here!
+        try {
+            const environment = this.dependencies.environmentProvider ? this.dependencies.environmentProvider() : [];
+            const targets = this.dependencies.targetProvider ? this.dependencies.targetProvider() : [];
+            // Ensure returned values are arrays and filter basic validity
+            const validEnvironment = Array.isArray(environment) ? environment.filter(obj => obj && obj.isMesh && obj.uuid && obj.visible) : [];
+            const validTargets = Array.isArray(targets) ? targets.filter(obj => obj && obj.isMesh && obj.uuid && obj.visible) : [];
+            return [...validEnvironment, ...validTargets];
+        } catch (error) {
+            console.error("BulletPhysicsSystem: Error getting collidable objects from providers:", error);
+            return [];
+        }
+    },
+
+    _raycast(ray, maxDistance, objects, bullet) {
+        // Reuse a single Raycaster instance if possible for performance
+        if (!this._raycaster) this._raycaster = new THREE.Raycaster();
+
+        this._raycaster.set(ray.origin, ray.direction);
+        this._raycaster.far = maxDistance;
+
+        // Filter out the bullet's own mesh *before* raycasting
+        const meshesToTest = objects.filter(obj => obj !== bullet.mesh);
+        if (meshesToTest.length === 0) return null;
+
+        const intersects = this._raycaster.intersectObjects(meshesToTest, false); // false: don't check children unless specified
+
+        if (intersects.length > 0) {
+            // Intersects are sorted by distance automatically. Return the first valid one.
+             const closestHit = intersects[0];
+
+            // Ensure the normal is in world space
+            if (closestHit.face && closestHit.object.matrixWorld) {
+                // Clone face normal and transform, don't modify original
+                closestHit.normal = closestHit.face.normal.clone().transformDirection(closestHit.object.matrixWorld).normalize();
+            } else {
+                 // Fallback if face normal isn't available (e.g., points intersection)
+                 // This is less accurate but better than nothing.
+                 closestHit.normal = ray.direction.clone().negate();
+            }
+            return closestHit;
+        }
+        return null;
+    },
+
+     _createHitEffect(position, normal, face, hitObject, materialProps, impactVelocity, impactEnergy, caliber) {
+        // 1. Particle Effects
+        if (this.dependencies.particleSystem && typeof this.dependencies.particleSystem.createImpactParticles === 'function') {
+            try {
+                const particleConfig = {
+                    position: position.clone(),
+                    normal: normal.clone(),
+                    color: materialProps.effects.particleColor || 0xaaaaaa,
+                    count: Math.max(3, Math.floor(8 * impactEnergy + caliber * 0.3)),
+                    size: 0.005 * caliber + 0.01,
+                    speed: 3 + impactEnergy * 8,
+                    spread: 0.6, // Radians
+                    duration: 400 + 600 * impactEnergy,
+                    materialProps: materialProps // Pass material info for custom types (sparks, splinters etc)
+                };
+                this.dependencies.particleSystem.createImpactParticles(particleConfig);
+            } catch (e) { console.error("Error creating particle effect:", e); }
+        }
+
+        // 2. Hit Decal
+        if (this.settings.renderHitDecals && !materialProps.effects.noDecal && hitObject && hitObject.isMesh && this.dependencies.scene) {
+            const decal = this._acquirePooledVisual(this._decalPool);
+            if (decal) {
+                decal.position.copy(position).addScaledVector(normal, 0.005); // Offset slightly
+                decal.scale.setScalar(this.settings.decalSize * (caliber / 7.62)); // Scale by caliber
+
+                // Orient decal to surface normal
+                const lookTarget = decal.position.clone().add(normal);
+                decal.lookAt(lookTarget);
+
+                // Random rotation around the normal for variation
+                decal.rotateZ(Math.random() * Math.PI * 2);
+
+                // Set decal material properties (texture should be loaded elsewhere)
+                // Example: decal.material.map = loadedDecalTextures[materialProps.effects.decal];
+                decal.material.color.setHex(0x222222); // Base dark hole color
+                decal.material.opacity = 0.85;
+                decal.material.needsUpdate = true;
+
+                decal.userData.creationTime = performance.now();
+                decal.userData.lifetime = this.settings.decalLifetime * (0.8 + Math.random() * 0.4); // Slight variation
+
+                // Optional: Attach decal to moving objects (careful with pooling!)
+                // if (hitObject.userData.physicsBody) {
+                //     hitObject.attach(decal); // THREE.Object3D.attach handles world transforms
+                // }
+            }
+        }
+
+        // 3. Audio Effect
+        if (this.dependencies.audioManager && typeof this.dependencies.audioManager.play === 'function') {
+             try {
+                const soundName = materialProps.effects.sound || 'hit_generic';
+                this.dependencies.audioManager.play(soundName, {
+                    position: position.clone(),
+                    volume: Math.max(0.1, 0.7 * impactEnergy),
+                    surface: materialProps.name || 'default'
+                });
+             } catch (e) { console.error("Error playing hit sound:", e); }
+        }
+    },
+
+    _updateBulletTrail(bullet, delta) {
+        if (!bullet.trail || !bullet.active || !bullet.trailVertices) return;
+
+        const trail = bullet.trail;
+        const geometry = trail.geometry;
+        const positions = geometry.attributes.position.array;
+        const colors = geometry.attributes.color.array;
+        const now = performance.now();
+        const fadeDuration = this.settings.trailFadeDuration;
+        const maxPoints = this.settings.trailMaxPoints;
+
+        // Add new vertex if moved sufficiently and space available
+        const lastVertexPos = (bullet.trailVertices.length > 0) ? bullet.trailVertices[bullet.trailVertices.length - 1].pos : bullet.initialPosition;
+        if (bullet.position.distanceTo(lastVertexPos) > this.settings.trailMinVertexDistance) {
+             let index;
+             if (trail.userData.vertexCount < maxPoints) {
+                 // Append to end
+                 index = trail.userData.vertexCount;
+                 trail.userData.vertexCount++;
+                 bullet.trailVertices.push({ pos: bullet.position.clone(), time: now });
+             } else {
+                 // Overwrite oldest vertex (circular buffer effect)
+                 index = 0; // Index of the oldest vertex to overwrite
+                 // Shift existing vertex data (inefficient but simple for example)
+                 bullet.trailVertices.shift(); // Remove oldest data
+                 bullet.trailVertices.push({ pos: bullet.position.clone(), time: now }); // Add newest data
+
+                 // Shift actual buffer data
+                 positions.copyWithin(0, 3, maxPoints * 3);
+                 colors.copyWithin(0, 3, maxPoints * 3);
+                 index = maxPoints - 1; // Write new data at the end
+             }
+
+
+             const writeIndex = index * 3;
+             positions[writeIndex] = bullet.position.x;
+             positions[writeIndex + 1] = bullet.position.y;
+             positions[writeIndex + 2] = bullet.position.z;
+
+             // Use base weapon color for new point
+             const baseColor = new THREE.Color(this.weaponTypes[bullet.weaponType]?.color || 0xffffff);
+             colors[writeIndex] = baseColor.r;
+             colors[writeIndex + 1] = baseColor.g;
+             colors[writeIndex + 2] = baseColor.b;
+
+             trail.userData.lastVertexTime = now; // Update time for potential independent cleanup
+             geometry.setDrawRange(0, trail.userData.vertexCount); // Update draw range
+        }
+
+
+        // Update existing vertex colors for fading
+        let needsColorUpdate = false;
+        let needsPosUpdate = true; // Always flag position buffer needs update
+        for (let i = 0; i < trail.userData.vertexCount; i++) {
+            const vertexData = bullet.trailVertices[i];
+            if (!vertexData) continue; // Should not happen, but safety check
+
+            const age = now - vertexData.time;
+            const alpha = Math.max(0, 1.0 - (age / fadeDuration));
+            const fadeFactor = alpha * alpha; // Exponential fade
+
+            const colorIndex = i * 3;
+            // Get original color if possible, or assume current color is base
+            // For simplicity, fade the current color value
+            colors[colorIndex + 0] *= fadeFactor;
+            colors[colorIndex + 1] *= fadeFactor;
+            colors[colorIndex + 2] *= fadeFactor;
+
+            needsColorUpdate = true;
+        }
+
+        // Update buffer attributes
+        if (needsPosUpdate) geometry.attributes.position.needsUpdate = true;
+        if (needsColorUpdate) geometry.attributes.color.needsUpdate = true;
+
+         // Might need to update bounding sphere if vertices change significantly
+         // geometry.computeBoundingSphere(); // Uncomment if culling issues appear
+    },
+
+    _updateActiveDecals(delta) {
+        if (!this.settings.renderHitDecals) return;
+        const now = performance.now();
+        const decalsToRelease = [];
+
+        for (const decal of this._decalPool) {
+            if (decal.userData.active && decal.userData.lifetime !== Infinity) {
+                const age = now - decal.userData.creationTime;
+                const lifeRatio = age / decal.userData.lifetime;
+
+                if (lifeRatio >= 1.0) {
+                    decalsToRelease.push(decal);
+                } else if (lifeRatio > 0.75) { // Start fading in last 25%
+                    const fade = 1.0 - (lifeRatio - 0.75) / 0.25;
+                    decal.material.opacity = 0.85 * Math.max(0, fade); // Fade base opacity
+                    decal.material.needsUpdate = true;
+                }
+            }
+        }
+
+        for(const decal of decalsToRelease) {
+            this._releasePooledVisual(decal);
+        }
+    },
+
+    _handleObstacleDamage(obstacleMesh, hitPosition, hitNormal, damageAmount, materialProps) {
+        if (!obstacleMesh || !obstacleMesh.uuid || !(damageAmount > 0)) return false;
+
+        const obstacleId = obstacleMesh.uuid;
+        let damageData = this.damagedObstacles.get(obstacleId);
+
+        if (!damageData) {
+            damageData = {
+                totalDamage: 0,
+                mesh: obstacleMesh, // Keep reference
+                segments: this.settings.partialDestructionEnabled ? this._createObstacleSegments(obstacleMesh) : null
+            };
+            // Only add if destructible flag is explicitly set
+             if (obstacleMesh.userData?.isDestructible) {
+                this.damagedObstacles.set(obstacleId, damageData);
+             } else {
+                 return false; // Not marked as destructible
+             }
+        }
+
+        damageData.totalDamage += damageAmount;
+
+        // Apply partial damage if enabled
+        if (damageData.segments) {
+            this._damageNearestSegment(damageData, hitPosition, damageAmount * 1.5); // Focus damage locally
+        }
+
+        // Check for full destruction
+        let fullyDestroyed = false;
+        const destructionThreshold = this.settings.obstacleDestructionThreshold;
+
+        if (damageData.segments) {
+            const totalSegments = damageData.segments.length;
+            if (totalSegments > 0) {
+                 const destroyedSegments = damageData.segments.filter(s => s.destroyed).length;
+                 const destructionRatio = destroyedSegments / totalSegments;
+                 const requiredRatio = materialProps.brittle ? 0.4 : 0.7; // Brittle things break easier
+                 if (destructionRatio >= requiredRatio || damageData.totalDamage >= destructionThreshold * 1.5) { // Also check total damage threshold as fallback
+                      fullyDestroyed = true;
+                 }
+            } else {
+                 // Fallback if segment creation failed
+                 if (damageData.totalDamage >= destructionThreshold) fullyDestroyed = true;
+            }
+        } else {
+            // Standard threshold check
+            if (damageData.totalDamage >= destructionThreshold) {
+                fullyDestroyed = true;
+            }
+        }
+
+        if (fullyDestroyed) {
+            this._destroyObstacle(damageData, obstacleId);
+            return true;
+        }
+
+        return false;
+    },
+
+    _createObstacleSegments(obstacleMesh) {
+        try {
+            if (!obstacleMesh.geometry) return null;
+            if (!obstacleMesh.geometry.boundingBox) {
+                obstacleMesh.geometry.computeBoundingBox();
+            }
+            if (!obstacleMesh.geometry.boundingBox) return null;
+
+            const segments = [];
+            const box = obstacleMesh.geometry.boundingBox;
+            const size = new THREE.Vector3(); box.getSize(size);
+            const center = new THREE.Vector3(); box.getCenter(center);
+            const segSize = size.clone().multiplyScalar(0.5);
+
+            // 2x2x2 grid (8 segments)
+            for (let x = -0.5; x <= 0.5; x += 1) {
+                for (let y = -0.5; y <= 0.5; y += 1) {
+                    for (let z = -0.5; z <= 0.5; z += 1) {
+                        const localPos = new THREE.Vector3(center.x + x * segSize.x, center.y + y * segSize.y, center.z + z * segSize.z);
+                        segments.push({
+                            localPosition: localPos,
+                            // worldPosition calculation deferred until needed or updated periodically
+                            health: 1.0,
+                            destroyed: false,
+                        });
+                    }
+                }
+            }
+            return segments;
+        } catch (e) {
+            console.error("Error creating obstacle segments:", e);
+            return null;
+        }
+    },
+
+    _damageNearestSegment(obstacleData, hitPositionWorld, damage) {
+        if (!obstacleData || !obstacleData.segments) return;
+
+        let nearestSegment = null;
+        let minDistanceSq = Infinity;
+        const tempWorldPos = new THREE.Vector3(); // Reuse vector
+
+        for (const segment of obstacleData.segments) {
+            if (segment.destroyed) continue;
+            // Calculate world position on the fly
+            tempWorldPos.copy(segment.localPosition).applyMatrix4(obstacleData.mesh.matrixWorld);
+            const distSq = tempWorldPos.distanceToSquared(hitPositionWorld);
+            if (distSq < minDistanceSq) {
+                minDistanceSq = distSq;
+                nearestSegment = segment;
+            }
+        }
+
+        if (nearestSegment) {
+            nearestSegment.health = Math.max(0, nearestSegment.health - damage);
+            if (nearestSegment.health === 0 && !nearestSegment.destroyed) {
+                nearestSegment.destroyed = true;
+                // Trigger local destruction effect
+                if (this.dependencies.particleSystem && typeof this.dependencies.particleSystem.createImpactParticles === 'function') {
+                     const segmentWorldPos = tempWorldPos.copy(nearestSegment.localPosition).applyMatrix4(obstacleData.mesh.matrixWorld);
+                     try {
+                         this.dependencies.particleSystem.createImpactParticles({
+                             position: segmentWorldPos, count: 8, size: 0.08, speed: 4, duration: 300,
+                             color: this.dependencies.materialManager.getMaterialProperties(this.dependencies.materialManager.getMaterialNameFromObject(obstacleData.mesh)).effects.particleColor
+                         });
+                     } catch (e) { console.error("Error creating segment destruction particles:", e); }
+                }
+            }
+        }
+    },
+
+    _destroyObstacle(damageData, obstacleId) {
+        const obstacleMesh = damageData.mesh;
+        if (!obstacleMesh) return;
+
+        const destroyPosition = new THREE.Vector3();
+         obstacleMesh.getWorldPosition(destroyPosition); // Get current world position for effects
+
+        if (this.settings.debugMode) console.log(`Destroying obstacle: ${obstacleId}`);
+
+        // 1. Destruction Particle Effect
+        if (this.dependencies.particleSystem && typeof this.dependencies.particleSystem.createExplosion === 'function') {
+            try {
+                 const materialProps = this.dependencies.materialManager.getMaterialProperties(this.dependencies.materialManager.getMaterialNameFromObject(obstacleMesh));
+                 this.dependencies.particleSystem.createExplosion({
+                     position: destroyPosition, count: 40 + Math.random() * 30, size: 0.15 + Math.random() * 0.15,
+                     speed: 8 + Math.random() * 8, duration: 1200 + Math.random() * 800,
+                     color: materialProps.effects.particleColor, materialProps: materialProps
+                 });
+             } catch (e) { console.error("Error creating destruction explosion:", e); }
+        }
+
+        // 2. Destruction Sound
+        if (this.dependencies.audioManager && typeof this.dependencies.audioManager.play === 'function') {
+            try {
+                 this.dependencies.audioManager.play('obstacleDestruction', { position: destroyPosition, volume: 1.0 });
+            } catch (e) { console.error("Error playing destruction sound:", e); }
+        }
+
+        // 3. Remove from Physics
+        if (this.dependencies.physicsWorld && typeof this.dependencies.physicsWorld.removeBody === 'function' && obstacleMesh.userData.physicsBody) {
+            try {
+                 this.dependencies.physicsWorld.removeBody(obstacleMesh.userData.physicsBody);
+                 obstacleMesh.userData.physicsBody = null;
+             } catch (e) { console.error("Error removing physics body:", e); }
+        }
+
+        // 4. Remove from Scene (make invisible, actual removal might be deferred)
+        obstacleMesh.visible = false;
+        // Optionally dispose geometry/material later by a separate manager
+        // obstacleMesh.geometry?.dispose();
+        // obstacleMesh.material?.dispose();
+        if (obstacleMesh.parent) {
+            // Use remove, not detach, if it's just hidden and might be reused/disposed later
+            obstacleMesh.parent.remove(obstacleMesh);
+        }
+
+
+        // 5. Clean up tracking data
+        this.damagedObstacles.delete(obstacleId);
+
+        // 6. Emit event
+        if (this.dependencies.eventSystem && typeof this.dependencies.eventSystem.emit === 'function') {
+             try {
+                 this.dependencies.eventSystem.emit('obstacleDestroyed', {
+                     obstacleUUID: obstacleId, position: destroyPosition,
+                 });
+            } catch (e) { console.error("Error emitting obstacleDestroyed event:", e); }
+        }
+    },
+
+     _applyImpactImpulse(hitObject, hitPosition, impulseVector) {
+        if (!this.dependencies.physicsWorld || typeof this.dependencies.physicsWorld.applyImpulse !== 'function' || !hitObject || !hitObject.userData?.physicsBody) {
+            return;
+        }
+        try {
+            const body = hitObject.userData.physicsBody;
+            // Assuming applyImpulse takes the body, world-space impulse, and world-space position
+            this.dependencies.physicsWorld.applyImpulse(
+                body,
+                impulseVector.clone().multiplyScalar(this.settings.obstacleImpactImpulseScale),
+                hitPosition.clone() // Clone to avoid modification issues
+            );
+        } catch (error) {
+            console.error("BulletPhysicsSystem: Error applying physics impulse:", error);
+        }
+    },
+
+    _calculateReflection(velocity, normal) {
+        // Uses THREE.Vector3's built-in reflect method
+        return velocity.clone().reflect(normal);
+    },
+
+    _isInWorldBounds(position) {
+        const limit = 5000; // Example large limit
+        return position.y > -200 && // Allow slightly below ground for effect persistence
+               Math.abs(position.x) < limit &&
+               Math.abs(position.z) < limit;
+    },
+
+    // --- Cleanup ---
+
+    clearAllBullets() {
+        if (this.settings.debugMode) console.log(`Clearing ${this.activeBullets.length} active bullets...`);
+        // Iterate backwards for safe removal while modifying array
+        for (let i = this.activeBullets.length - 1; i >= 0; i--) {
+            const bullet = this.activeBullets[i];
+            if (bullet) {
+                 this._deactivateVisuals(bullet);
+                 this._releaseBulletObject(bullet);
+            }
+        }
+        this.activeBullets.length = 0; // Faster way to clear array
+    },
+
+    clearAllDecals() {
+        if (this.settings.renderHitDecals && this.settings.debugMode) console.log("Clearing active decals...");
+        for (const decal of this._decalPool) {
+            if (decal.userData.active) {
+                this._releasePooledVisual(decal);
+            }
+        }
+    },
+
+    // --- Public API Methods ---
+
+    /** Manually fire a single bullet (alternative to event system). */
+    fireBullet(origin, direction, weaponType = 'standard') {
+        if (!this.settings.enabled) return;
+        if (!origin || !direction) { console.error("fireBullet requires origin and direction."); return; }
+        const fireData = { origin: origin.clone(), direction: direction.clone(), weaponType };
+        this.handleBulletFired(fireData);
+    },
+
+    /** Manually fire multiple pellets (alternative to event system). */
+    fireShotgunBlast(origin, baseDirection, pelletWeaponType = 'shotgun_pellet', pelletCount = 8) {
+        if (!this.settings.enabled) return;
+         if (!origin || !baseDirection) { console.error("fireShotgunBlast requires origin and baseDirection."); return; }
+
+         const weaponConfig = this.weaponTypes[pelletWeaponType];
+         if (!weaponConfig) {
+             console.warn(`BulletPhysicsSystem: Unknown shotgun pellet type "${pelletWeaponType}" for fireShotgunBlast.`);
+             return;
+         }
+         const spread = weaponConfig.spreadAngle || 5.0;
+
+         const fireData = {
+             origin: origin.clone(),
+             direction: baseDirection.clone(),
+             weaponType: pelletWeaponType,
+             count: pelletCount,
+             spreadAngle: spread
+         };
+         // Use the main handler for spread calculation and firing
+         this.handleBulletFired(fireData);
+
+          // Play shotgun sound distinct from pellets if desired
+          if (this.dependencies.audioManager) {
+            this.dependencies.audioManager.play('shoot_shotgun', { position: origin, volume: 1.0 });
+        }
+    },
+
+    /** Enable or disable the entire physics simulation. */
+    setEnabled(enabled) {
+         if(this.settings.enabled === enabled) return;
+         this.settings.enabled = enabled;
+         if (!enabled) {
+             this.clearAllBullets();
+             this.clearAllDecals();
+             this.damagedObstacles.clear();
+             console.log("BulletPhysicsSystem Disabled.");
+         } else {
+             console.log("BulletPhysicsSystem Enabled.");
+         }
+    },
+
+     /** Reload weapon configurations (e.g., after loading from file). */
+     setWeaponTypes(newWeaponTypes) {
+         if (typeof newWeaponTypes !== 'object' || newWeaponTypes === null) {
+             console.error("Failed to set weapon types: Invalid data provided.");
+             return;
+         }
+         this.weaponTypes = newWeaponTypes;
+         if (this.settings.debugMode) console.log("BulletPhysicsSystem weapon types updated.");
+     }
+};
+
+export default BulletPhysicsSystem;
