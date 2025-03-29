@@ -2,7 +2,7 @@
 const GitHubTarget = {
   mesh: null,
   active: true,
-  githubLink: 'https://github.com/ychoi-kr/vibefps',
+  githubLink: "https://github.com/percJaja/vibefps",
   
   init() {
     // GitHub 로고 형태의 타겟 생성 (간단한 육면체로 표현)
